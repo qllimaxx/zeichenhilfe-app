@@ -7,16 +7,18 @@ package de.benni.zeichenhilfe
 enum class UiMode { ALIGN, DRAW }
 
 /**
- * Hauptknopf unten rechts. Die Beschriftung steht nur hier und in strings.xml – in 0.3 wird
- * PLACE durch FIT („Einpassen“) ersetzt, ohne die Oberfläche anzufassen.
+ * Hauptknopf unten rechts: PLACE = „Platzieren“ (Tippen-Platzieren, kein Blatt erkannt),
+ * FIT = „Einpassen“ (Blatt erkannt, ab 0.3), DONE = „Fertig“ (Foto liegt → Zeichnen).
  */
-enum class MainAction { PLACE, DONE }
+enum class MainAction { PLACE, FIT, DONE }
 
 class UiState {
     var mode = UiMode.ALIGN; private set
     var locked = false; private set
     var hasPhoto = false
     var placed = false
+    /** Blatt im Modus Ausrichten stabil erkannt (ab 0.3). */
+    var sheetFound = false
     var menuOpen = false; private set
     var infoOpen = false; private set
 
@@ -30,7 +32,14 @@ class UiState {
     var drawHintSeen = false
 
     /** Was der Hauptknopf gerade tut. */
-    val mainAction: MainAction get() = if (placed) MainAction.DONE else MainAction.PLACE
+    val mainAction: MainAction get() = when {
+        placed -> MainAction.DONE
+        sheetFound && mode == UiMode.ALIGN -> MainAction.FIT
+        else -> MainAction.PLACE
+    }
+
+    /** Mehr-Menü: „Neu einpassen“ nur, wenn ein Blatt erkannt ist. */
+    fun refitVisible(): Boolean = mode == UiMode.ALIGN && sheetFound
 
     fun setMode(m: UiMode, now: Long) {
         if (m == mode) return
@@ -107,12 +116,17 @@ class UiState {
         const val ZOOM_PILL_MS = 1200L
         const val TOAST_MS = 2000L
 
-        /** Text der Status-Pille. */
+        /**
+         * Text der Status-Pille. [sheetSize] = erkannte Blattgröße („21,0 × 29,7 cm“) oder null;
+         * [sheetSearch] = Blatt-Erkennung läuft (Ausrichten, ab 0.3).
+         */
         fun statusText(sessionReady: Boolean, tracking: Boolean, failure: String, planeSeen: Boolean,
-                       hasPhoto: Boolean, placed: Boolean): String = when {
+                       hasPhoto: Boolean, placed: Boolean, sheetSize: String? = null, sheetSearch: Boolean = false): String = when {
             !sessionReady -> "AR startet …"
             !tracking -> "Tracking verloren" + if (failure.isNotEmpty()) " – $failure" else ""
             !planeSeen && !placed -> "Handy langsam über den Tisch bewegen"
+            sheetSize != null -> "Blatt erkannt · $sheetSize"
+            sheetSearch && !placed -> "Blatt suchen – ganzes Blatt ins Bild"
             !hasPhoto -> "Fläche erkannt – Foto wählen"
             !placed -> "Fläche erkannt – tippe zum Platzieren"
             else -> "Foto liegt auf dem Tisch"

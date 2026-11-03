@@ -98,4 +98,20 @@ class UiStateTest {
         assertTrue(UiState.statusText(true, true, "", false, false, false) == "Handy langsam über den Tisch bewegen")
         assertTrue(UiState.statusText(true, true, "", true, true, false) == "Fläche erkannt – tippe zum Platzieren")
     }
+
+    @Test
+    fun einpassenSobaldBlattErkannt() {
+        val u = UiState(); u.hasPhoto = true
+        check(u.mainAction == MainAction.PLACE && !u.refitVisible(), "ohne Blatt: Platzieren, kein „Neu einpassen“")
+        u.sheetFound = true
+        check(u.mainAction == MainAction.FIT && u.refitVisible(), "Blatt erkannt: Einpassen + „Neu einpassen“")
+        u.onPlaced(0)
+        check(u.mainAction == MainAction.DONE && u.refitVisible(), "eingepasst: Fertig, „Neu einpassen“ bleibt")
+        u.setMode(UiMode.DRAW, 10)
+        check(!u.refitVisible(), "Zeichnen: kein „Neu einpassen“")
+        assertTrue(UiState.statusText(true, true, "", true, true, false, "21,0 × 29,7 cm", true) == "Blatt erkannt · 21,0 × 29,7 cm")
+        assertTrue(UiState.statusText(true, true, "", true, true, false, null, true) == "Blatt suchen – ganzes Blatt ins Bild")
+        assertTrue(UiState.statusText(true, true, "", true, true, true, null, true) == "Foto liegt auf dem Tisch")
+        println("Hauptknopf mit Blatt: ${MainAction.FIT} → nach Einpassen ${MainAction.DONE}")
+    }
 }

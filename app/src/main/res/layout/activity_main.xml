@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Zeichenhilfe AR 0.2 – Oberfläche nach Design M1 „Klar“. Lage der Elemente wird in MainActivity.applyLayout()
+<!-- Zeichenhilfe AR 0.3 – Oberfläche nach Design M1 „Klar“. Lage der Elemente wird in MainActivity.applyLayout()
      für Hoch- und Querformat gesetzt; hier stehen nur die Grundwerte. -->
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/root"
@@ -9,6 +9,12 @@
 
     <android.opengl.GLSurfaceView
         android:id="@+id/gl"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+    <!-- Rahmen ums erkannte Blatt (ab 0.3) -->
+    <de.benni.zeichenhilfe.SheetOverlay
+        android:id="@+id/sheetOverlay"
         android:layout_width="match_parent"
         android:layout_height="match_parent" />
 
@@ -99,6 +105,7 @@
             android:layout_marginBottom="84dp"
             android:orientation="vertical"
             android:visibility="gone">
+            <TextView android:id="@+id/mFit" style="@style/MenuePille" android:drawableEnd="@drawable/ic_einpassen" android:text="@string/menue_neu_einpassen" android:visibility="gone" />
             <TextView android:id="@+id/mPhoto" style="@style/MenuePille" android:drawableEnd="@drawable/ic_foto" android:text="@string/menue_foto" />
             <TextView android:id="@+id/mFocus" style="@style/MenuePille" android:drawableEnd="@drawable/ic_fokus" android:text="@string/menue_fokus_auto" />
             <TextView android:id="@+id/mMode" style="@style/MenuePille" android:drawableEnd="@drawable/ic_stift" android:text="@string/menue_zeichnen" />

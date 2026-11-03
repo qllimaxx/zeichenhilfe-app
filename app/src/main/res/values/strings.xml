@@ -1,8 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Zeichenhilfe AR</string>
-    <!-- Hauptknopf: in 0.3 wird "Platzieren" zu "Einpassen" (nur hier ändern) -->
+    <!-- Hauptknopf: Platzieren (ohne Blatt) / Einpassen (Blatt erkannt, ab 0.3) / Fertig -->
     <string name="aktion_platzieren">Platzieren</string>
+    <string name="aktion_einpassen">Einpassen</string>
+    <string name="menue_neu_einpassen">Neu einpassen</string>
     <string name="aktion_fertig">Fertig</string>
     <string name="aktion_ausrichten">Ausrichten</string>
     <string name="menue_foto">Foto wählen</string>
