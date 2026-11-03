@@ -1,10 +1,14 @@
 package de.benni.zeichenhilfe
 
 /*
- * Zeichenhilfe AR – Version 0.6
+ * Zeichenhilfe AR – Version 0.7
  * Autor: Benjamin Dormoros
  *
  * Änderungsverlauf
+ * 0.7       Zeichnen: bekanntes Blatt-Rechteck an die Kanten im vollen CPU-Bild eingepasst (EdgeTracker) statt
+ *           „ganzes Rechteck erkennen“ – geht schräg, mit Spiralbindung, Hand über einer Ecke (3 Kanten reichen);
+ *           sonst globale Erkennung als Neustart. Blatt-Erkennung mit lokalem Schwellwert und lockerer Form-Prüfung.
+ *           Diagnose: Blickwinkel, gültig/verworfen, häufigster Grund.
  * 0.6       Korrektur gegen Verrutschen am Blatt: im Modus Zeichnen Blatt-Erkennung ca. 3×/s, Versatz zum Anker
  *           gemittelt/Ausreißer verworfen/Totzone 1 mm, sanft nachgeführt (SheetCorrection.kt); bei Verdeckung aus.
  *           Info: Schalter Korrektur, letzter Versatz, Anzahl, Blatt erkannt. Einmaliger Tipp „Fokus fest“.
@@ -101,7 +105,7 @@ import kotlin.math.min
 import kotlin.math.roundToInt
 
 private const val TAG = "ZeichenhilfeAR"
-private const val VERSION = "0.6"
+private const val VERSION = "0.7"
 private const val FADE_MS = 200L
 
 class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
@@ -201,8 +205,14 @@ class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
     private val detector = SheetDetector()                // nur im Erkennungs-Thread benutzt
     private val tracker = SheetTracker()                  // nur im GL-Thread
     private class DetJob(val y: ByteArray, val w: Int, val h: Int, val rowStride: Int, val invVp: FloatArray,
-                         val rot: Int, val viewW: Int, val viewH: Int)
-    private class DetOut(val r: SheetDetector.Result, val job: DetJob, val factor: Float, val detW: Int, val detH: Int)
+                         val rot: Int, val viewW: Int, val viewH: Int, val model: SheetModel? = null, val prior: FloatArray? = null)
+    private class DetOut(val r: SheetDetector.Result, val job: DetJob, val factor: Float, val detW: Int, val detH: Int,
+                         val track: EdgeTracker.Result? = null)
+    // Diagnose Zeichnen (ab 0.7, GL-Thread)
+    private var drawValid = 0
+    private var drawRejected = 0
+    private val drawReasons = HashMap<String, Int>()
+    private var lastViewDeg = -1f
     private val detOut = AtomicReference<DetOut?>(null)
     /** stabil erkanntes Blatt (GL-Thread schreibt, Bedien-Thread liest) */
     @Volatile private var sheetNow: Sheet? = null
@@ -1149,14 +1159,46 @@ class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
             buf.position(0)
             val bytes = ByteArray(buf.remaining())
             buf.get(bytes)
-            val job = DetJob(bytes, img.width, img.height, plane.rowStride, inv.copyOf(), lastRotation, viewW, viewH)
+            // Zeichnen: Kamera-/Flächenmodell für die Kanten-Einpassung des bekannten Blatts
+            var model: SheetModel? = null; var prior: FloatArray? = null
+            val a = anchor; val cr = corr
+            if (!detectOn && a != null && cr != null && a.trackingState == TrackingState.TRACKING) {
+                val v = floatArrayOf(0f, 0f, viewW.toFloat(), 0f, 0f, viewH.toFloat()); val im = FloatArray(6)
+                frame.transformCoordinates2d(Coordinates2d.VIEW, v, Coordinates2d.IMAGE_PIXELS, im)
+                val aff = floatArrayOf(im[0], (im[2] - im[0]) / viewW, (im[4] - im[0]) / viewH, im[1], (im[3] - im[1]) / viewW, (im[5] - im[1]) / viewH)
+                val am = FloatArray(16); a.pose.toMatrix(am, 0)
+                model = SheetModel(am, vp.copyOf(), viewW, viewH, aff, fitLong, fitShort)
+                prior = floatArrayOf(cr.targetX, cr.targetZ, cr.targetT)
+            }
+            val job = DetJob(bytes, img.width, img.height, plane.rowStride, inv.copyOf(), lastRotation, viewW, viewH, model, prior)
             val ex = detExec ?: Executors.newSingleThreadExecutor { r -> Thread(r, "blatt").apply { isDaemon = true } }.also { detExec = it }
             detBusy = true; lastDetSubmit = t
             ex.execute {
                 try {
-                    val sc = SheetDetector.downscale(job.y, job.w, job.h, job.rowStride, 480)
-                    val r = detector.detect(sc.gray, sc.w, sc.h)
-                    detOut.set(DetOut(r, job, sc.factor, sc.w, sc.h))
+                    val m = job.model; val pr = job.prior
+                    if (m != null && pr != null) {
+                        // Zeichnen: bekanntes Rechteck an die Kanten im vollen Bild einpassen, Start = bisherige Lage
+                        var tr = EdgeTracker.track(job.y, job.w, job.h, job.rowStride, m, pr)
+                        var gr = SheetDetector.Result(false, null, "", 0.0)
+                        if (!tr.ok) {
+                            // Neustart (z. B. Blatt deutlich verschoben): Blatt im ganzen Bild suchen, grobe Lage, einpassen
+                            val sc = SheetDetector.downscale(job.y, job.w, job.h, job.rowStride, 480)
+                            gr = detector.detect(sc.gray, sc.w, sc.h)
+                            val cc = gr.corners
+                            if (gr.found && cc != null) {
+                                val coarse = EdgeTracker.coarseFromCorners(m, FloatArray(8) { cc[it] * sc.factor })
+                                if (coarse != null && kotlin.math.hypot(coarse[0] - pr[0], coarse[1] - pr[1]) < 0.25f) {
+                                    val t2 = EdgeTracker.track(job.y, job.w, job.h, job.rowStride, m, coarse)
+                                    if (t2.ok) tr = t2
+                                }
+                            }
+                        }
+                        detOut.set(DetOut(gr, job, 1f, job.w, job.h, tr))
+                    } else {
+                        val sc = SheetDetector.downscale(job.y, job.w, job.h, job.rowStride, 480)
+                        val r = detector.detect(sc.gray, sc.w, sc.h)
+                        detOut.set(DetOut(r, job, sc.factor, sc.w, sc.h))
+                    }
                 } catch (e: Throwable) {
                     Log.w(TAG, "Blatt-Erkennung", e)
                 } finally { detBusy = false }
@@ -1173,6 +1215,7 @@ class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
         val out = detOut.getAndSet(null) ?: return
         val job = out.job
         if (job.rot != lastRotation || job.viewW != viewW || job.viewH != viewH) return   // Drehung dazwischen: verwerfen
+        if (draw || out.track != null) { if (draw && out.track != null) feedTrack(out.track); return }
         // Rate und Rechenzeit
         val tn = SystemClock.uptimeMillis()
         if (detT0 == 0L) detT0 = tn
@@ -1193,7 +1236,6 @@ class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
                 if (sh == null || sh.short < 0.05f || sh.long > 1.2f) { reason = "Größe unplausibel"; extra = null }
             }
         }
-        if (draw) { feedCorrection(extra, reason); return }
         tracker.add(if (extra != null) c else null, extra)
         if (tracker.stable) {
             val m = tracker.meanExtra()
@@ -1231,21 +1273,20 @@ class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
         return out
     }
 
-    /** Zeichnen: gemessenes Blatt in Anker-Koordinaten an die Korrektur geben. */
-    private fun feedCorrection(extra: FloatArray?, reason: String) {
+    /** Zeichnen (ab 0.7): Ergebnis der Kanten-Einpassung an die Korrektur geben, Diagnose zählen. */
+    private fun feedTrack(r: EdgeTracker.Result) {
         val c = corr ?: return
-        val a = anchor
-        if (extra != null && a != null && a.trackingState == TrackingState.TRACKING) {
-            val inv = a.pose.inverse()
-            val loc = FloatArray(8)
-            for (i in 0 until 4) {
-                val p = inv.transformPoint(floatArrayOf(extra[3 * i], extra[3 * i + 1], extra[3 * i + 2]))
-                loc[2 * i] = p[0]; loc[2 * i + 1] = p[2]
-            }
-            c.measure(loc)
-        } else c.measure(FloatArray(8))   // ungültig → Korrektur ausgesetzt (Grund unten)
-        val why = if (extra == null) reason.ifEmpty { "nicht erkannt" } else c.lastReason
-        corrDiag = (if (c.lastValid) "Blatt im Zeichnen erkannt: ja" else "Blatt im Zeichnen erkannt: nein ($why)") +
+        lastViewDeg = r.viewDeg
+        if (r.ok) { c.measurePose(r.cx, r.cz, r.t); drawValid++ }
+        else {
+            c.invalid(r.reason); drawRejected++
+            val key = r.reason.substringBefore(" (")
+            drawReasons[key] = (drawReasons[key] ?: 0) + 1
+        }
+        val top = drawReasons.maxByOrNull { it.value }?.key ?: "–"
+        corrDiag = (if (c.lastValid) "Blatt im Zeichnen erkannt: ja" else "Blatt im Zeichnen erkannt: nein (${c.lastReason})") +
+            "\nBlickwinkel: " + (if (lastViewDeg < 0) "–" else "${lastViewDeg.roundToInt()}°") +
+            " · gültig $drawValid / verworfen $drawRejected · häufigster Grund: $top" +
             "\nLetzter Versatz zum Anker: " + (if (c.lastOffset < 0) "–" else f1(c.lastOffset * 1000f) + " mm") +
             " · angewendet " + f1(kotlin.math.hypot(c.appliedX, c.appliedZ) * 1000f) + " mm, " +
             f1(Math.toDegrees(c.appliedT.toDouble()).toFloat()) + "° · Korrekturen: ${c.count}"
@@ -1281,6 +1322,7 @@ class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
         place.cx = 0f; place.cz = 0f; place.width = f.width; place.theta = f.theta
         fitted = true; fitLong = sh.long; fitShort = sh.short
         corr = SheetCorrection(sh.long, sh.short)             // neue Bezugslage, Versatz 0
+        drawValid = 0; drawRejected = 0; drawReasons.clear(); lastViewDeg = -1f
         updateSheetRel()
         remembered = null
         ui.post { u.onPlaced(now()); u.showToast("Foto eingepasst · Rand 1 cm", now()); refreshUi() }

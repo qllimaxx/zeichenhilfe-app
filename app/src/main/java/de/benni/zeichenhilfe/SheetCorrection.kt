@@ -58,6 +58,20 @@ class SheetCorrection(val refLong: Float, val refShort: Float) {
         while (t < -PI / 2) t += PI.toFloat()
         // fast quadratisches Blatt: lange/kurze Seite nicht unterscheidbar → auf −45°..45° bringen
         if (refLong < refShort * 1.06f) { while (t > PI / 4) t -= (PI / 2).toFloat(); while (t < -PI / 4) t += (PI / 2).toFloat() }
+        return measurePose(cx, cz, t)
+    }
+
+    /** Ungültige Erkennung vermerken (Korrektur bleibt beim letzten Stand). */
+    fun invalid(reason: String) { lastValid = false; lastReason = reason }
+
+    /**
+     * Ab 0.7: fertig bestimmte Blattlage übernehmen (Versatz cx/cz in Metern, Drehung t), z. B. aus der
+     * Kanten-Einpassung des bekannten Rechtecks (EdgeTracker), die die Gültigkeit selbst prüft.
+     */
+    fun measurePose(cx: Float, cz: Float, t0: Float): Boolean {
+        var t = t0
+        while (t > PI / 2) t -= PI.toFloat()
+        while (t < -PI / 2) t += PI.toFloat()
         lastValid = true; lastReason = ""
         lastOffset = hypot(cx, cz)
         win.addLast(floatArrayOf(cx, cz, t)); while (win.size > WINDOW) win.removeFirst()

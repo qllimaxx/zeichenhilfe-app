@@ -70,13 +70,16 @@ class SheetDetector {
         val mLo = sLo / cLo; val mHi = sHi / cHi
         if (mHi - mLo < minContrast) return null to "zu wenig Kontrast (${(mHi - mLo).roundToInt()})"
 
+        // ---- 1b. ab 0.7: Schwellwert lokal (Kacheln 4 × 3, je Kachel Otsu, weich verbunden) ----
+        // Bei schräger Sicht ist der hintere Teil oft dunkler; eine Kachel ohne klaren Kontrast nimmt den globalen Wert.
+        val on = localThreshold(g, w, h, thr)
         // ---- 2. zusammenhängende helle Flächen ----
         val label = IntArray(n)            // 0 = nicht hell/unbesucht, >0 = Fläche
         val stack = IntArray(n)
         var bestLabel = 0; var bestArea = 0
         var cur = 0
         for (start in 0 until n) {
-            if (label[start] != 0 || g[start] <= thr) continue
+            if (label[start] != 0 || !on[start]) continue
             cur++
             var sp = 0; stack[sp++] = start; label[start] = cur
             var area = 0; var border = false
@@ -84,10 +87,10 @@ class SheetDetector {
                 val p = stack[--sp]; area++
                 val x = p % w; val y = p / w
                 if (x == 0 || y == 0 || x == w - 1 || y == h - 1) border = true
-                if (x > 0) { val q = p - 1; if (label[q] == 0 && g[q] > thr) { label[q] = cur; stack[sp++] = q } }
-                if (x < w - 1) { val q = p + 1; if (label[q] == 0 && g[q] > thr) { label[q] = cur; stack[sp++] = q } }
-                if (y > 0) { val q = p - w; if (label[q] == 0 && g[q] > thr) { label[q] = cur; stack[sp++] = q } }
-                if (y < h - 1) { val q = p + w; if (label[q] == 0 && g[q] > thr) { label[q] = cur; stack[sp++] = q } }
+                if (x > 0) { val q = p - 1; if (label[q] == 0 && on[q]) { label[q] = cur; stack[sp++] = q } }
+                if (x < w - 1) { val q = p + 1; if (label[q] == 0 && on[q]) { label[q] = cur; stack[sp++] = q } }
+                if (y > 0) { val q = p - w; if (label[q] == 0 && on[q]) { label[q] = cur; stack[sp++] = q } }
+                if (y < h - 1) { val q = p + w; if (label[q] == 0 && on[q]) { label[q] = cur; stack[sp++] = q } }
             }
             if (!border && area > bestArea) { bestArea = area; bestLabel = cur }
         }
@@ -125,6 +128,43 @@ class SheetDetector {
     }
 
     // ------------------------------------------------------------------------------------
+    /** Lokaler Schwellwert: Otsu je Kachel (4 × 3), bilinear zwischen den Kachelmitten; schwacher Kontrast → global. */
+    private fun localThreshold(g: IntArray, w: Int, h: Int, global: Int): BooleanArray {
+        val tx = 4; val ty = 3
+        val t = Array(ty) { FloatArray(tx) }
+        for (j in 0 until ty) for (i in 0 until tx) {
+            val x0 = i * w / tx; val x1 = (i + 1) * w / tx; val y0 = j * h / ty; val y1 = (j + 1) * h / ty
+            val hist = IntArray(256); var n = 0
+            for (y in y0 until y1) for (x in x0 until x1) { hist[g[y * w + x]]++; n++ }
+            var sumAll = 0.0; for (k in 0 until 256) sumAll += k.toDouble() * hist[k]
+            var wB = 0.0; var sumB = 0.0; var best = -1.0; var th = global
+            for (k in 0 until 256) {
+                wB += hist[k]; if (wB == 0.0) continue
+                val wF = n - wB; if (wF == 0.0) break
+                sumB += k.toDouble() * hist[k]
+                val mB = sumB / wB; val mF = (sumAll - sumB) / wF
+                val bt = wB * wF * (mB - mF) * (mB - mF)
+                if (bt > best) { best = bt; th = k }
+            }
+            // Kontrast und Anteile der Kachel prüfen: nur bei klarer Zweiteilung den lokalen Wert nehmen
+            var cl = 0.0; var sl = 0.0; var ch = 0.0; var shh = 0.0
+            for (k in 0 until 256) if (k <= th) { cl += hist[k]; sl += k.toDouble() * hist[k] } else { ch += hist[k]; shh += k.toDouble() * hist[k] }
+            val good = cl > 0.1 * n && ch > 0.1 * n && (shh / ch - sl / cl) >= minContrast
+            // nie weit vom globalen Wert weg (sonst würde eine einfarbige Fläche zerfallen)
+            t[j][i] = if (good) min(global + 40, max(global - 40, th)).toFloat() else global.toFloat()
+        }
+        val on = BooleanArray(w * h)
+        for (y in 0 until h) {
+            val fy = ((y + 0.5f) / h * ty - 0.5f).coerceIn(0f, ty - 1f); val j0 = fy.toInt(); val j1 = min(ty - 1, j0 + 1); val ay = fy - j0
+            for (x in 0 until w) {
+                val fx = ((x + 0.5f) / w * tx - 0.5f).coerceIn(0f, tx - 1f); val i0 = fx.toInt(); val i1 = min(tx - 1, i0 + 1); val ax = fx - i0
+                val th = (t[j0][i0] * (1 - ax) + t[j0][i1] * ax) * (1 - ay) + (t[j1][i0] * (1 - ax) + t[j1][i1] * ax) * ay
+                on[y * w + x] = g[y * w + x] > th
+            }
+        }
+        return on
+    }
+
     private fun blur3(s: ByteArray, w: Int, h: Int): IntArray {
         val tmp = IntArray(w * h); val out = IntArray(w * h)
         for (y in 0 until h) {
@@ -300,12 +340,12 @@ class SheetDetector {
             val a = q[(i + 3) % 4]; val b = q[i]; val c = q[(i + 1) % 4]
             val ux = a[0] - b[0]; val uy = a[1] - b[1]; val vx = c[0] - b[0]; val vy = c[1] - b[1]
             val ang = Math.toDegrees(acos(((ux * vx + uy * vy) / (hypot(ux, uy) * hypot(vx, vy))).toDouble().coerceIn(-1.0, 1.0)))
-            if (ang < 40 || ang > 140) return "Winkel unplausibel (${ang.roundToInt()}°)"
+            if (ang < 25 || ang > 155) return "Winkel unplausibel (${ang.roundToInt()}°)"
         }
         val r02 = len[0] / len[2]; val r13 = len[1] / len[3]
-        if (r02 < 0.4f || r02 > 2.5f || r13 < 0.4f || r13 > 2.5f) return "Form unplausibel"
+        if (r02 < 0.25f || r02 > 4f || r13 < 0.25f || r13 > 4f) return "Form unplausibel"
         val a = (len[0] + len[2]) / 2; val b = (len[1] + len[3]) / 2
-        if (min(a, b) / max(a, b) < 0.25f) return "zu schmal"
+        if (min(a, b) / max(a, b) < 0.15f) return "zu schmal"
         return null
     }
 
