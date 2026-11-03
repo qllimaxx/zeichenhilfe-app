@@ -1,0 +1,54 @@
+# Baut bei jedem Push auf "main" die App und legt die APK im Release "latest" ab.
+name: APK bauen
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: write   # nötig, damit der Workflow das Release "latest" anlegen darf
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Quellcode holen
+        uses: actions/checkout@v4
+
+      - name: Java 17 einrichten
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Gradle einrichten
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Gradle-Wrapper ausführbar machen
+        run: chmod +x gradlew
+
+      - name: Tests ausführen und APK bauen
+        run: ./gradlew --no-daemon testDebugUnitTest assembleDebug
+
+      - name: APK umbenennen
+        run: cp app/build/outputs/apk/debug/app-debug.apk zeichenhilfe-ar.apk
+
+      - name: Release "latest" erneuern
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete latest --yes --cleanup-tag || true
+          gh release create latest zeichenhilfe-ar.apk \
+            --title "Zeichenhilfe AR – neueste Version" \
+            --notes "Automatisch gebaut aus Commit ${GITHUB_SHA::7}. Datei zeichenhilfe-ar.apk am Handy herunterladen und installieren." \
+            --target "$GITHUB_SHA" \
+            --latest
+
+      - name: Testbericht aufbewahren (falls etwas schiefgeht)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: testbericht
+          path: app/build/reports/tests/
+          if-no-files-found: ignore
