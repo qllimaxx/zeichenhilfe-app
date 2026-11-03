@@ -39,19 +39,22 @@ data class EditSettings(
     val lines: Boolean = false,
     val sensitivity: Float = 0.5f,    // 0 = wenige, 1 = viele Linien
     val lineWidth: Int = 1,           // 0 fein, 1 mittel, 2 kräftig
-    val transparent: Boolean = false  // nur Linien sichtbar
+    val transparent: Boolean = false, // nur Linien sichtbar
+    val detail: Float = 0.5f,         // ab 0.5: 1 = viele Details, 0 = wenig (stärker geglättet, kurze Stücke weg)
+    val mask: MaskData? = null        // ab 0.5: Freistellen-Maske in Original-Koordinaten (null = alles sichtbar)
 ) {
     val geometryDefault get() = rot90 == 0 && !flipH && fineDeg == 0f
     val cropDefault get() = crop == CropRect.FULL && cropMode == CropMode.FREE
     val toneDefault get() = brightness == 0f && contrast == 0f && !gray
-    val linesDefault get() = !lines && sensitivity == 0.5f && lineWidth == 1 && !transparent
+    val linesDefault get() = !lines && sensitivity == 0.5f && lineWidth == 1 && !transparent && detail == 0.5f
     /** Nichts verändert → das Original kann direkt benutzt werden. */
-    val isIdentity get() = geometryDefault && crop == CropRect.FULL && toneDefault && !lines
+    val isIdentity get() = geometryDefault && crop == CropRect.FULL && toneDefault && !lines && mask == null
 
     fun resetGeometry() = copy(rot90 = 0, flipH = false, fineDeg = 0f, crop = CropRect.FULL)
     fun resetCrop() = copy(crop = CropRect.FULL, cropMode = CropMode.FREE)
     fun resetTone() = copy(brightness = 0f, contrast = 0f, gray = false)
-    fun resetLines() = copy(lines = false, sensitivity = 0.5f, lineWidth = 1, transparent = false)
+    fun resetLines() = copy(lines = false, sensitivity = 0.5f, lineWidth = 1, transparent = false, detail = 0.5f)
+    fun resetMask() = copy(mask = null)
 
     /** 90° drehen (+1 = rechts, −1 = links); der Zuschnitt dreht mit. */
     fun rotate90(dir: Int): EditSettings {
@@ -183,12 +186,17 @@ object PhotoEdit {
      * Kantenstärke → Linienmaske 0..1 (Graustufen → Glättung → Sobel → Schwellwert → Verdicken).
      * [img] ist das bereits gedrehte/zugeschnittene/getönte Bild in Arbeitsgröße.
      */
-    fun lineMask(img: IntArray, w: Int, h: Int, sensitivity: Float, lineWidth: Int): FloatArray {
+    fun lineMask(img: IntArray, w: Int, h: Int, sensitivity: Float, lineWidth: Int, detail: Float = 1f): FloatArray {
         // Kanten in allen drei Farbkanälen suchen (auch Farbgrenzen mit gleicher Helligkeit, z. B. Sonne vor Himmel)
         val sens = min(1f, max(0f, sensitivity))
-        val thr = 40f - 34f * sens            // Kantenstärke (0..255) ab der eine Linie entsteht
+        val det = min(1f, max(0f, detail))
+        val br = ((1f - det) * 4f * max(w, h) / WORK_LONG + 0.5f).toInt()     // zusätzlicher Glättungsradius in Pixeln
+        // Kantenstärke (0..255) ab der eine Linie entsteht; bei wenig Details zusätzlich etwas höher
+        val thr = (40f - 34f * sens) * (1f + 0.7f * (1f - det))
         val soft = max(3f, thr * 0.5f)
-        val best = FloatArray(w * h)
+        val best = FloatArray(w * h); val bgx = FloatArray(w * h); val bgy = FloatArray(w * h)
+        // Abstand der Differenz passend zur Glättung (sonst würden geglättete Umrisse zu schwach)
+        val sp = max(1, br)
         for (ch in 0 until 3) {
             val shift = 16 - 8 * ch
             var a = FloatArray(w * h) { i -> ((img[i] shr shift) and 255).toFloat() }
@@ -199,20 +207,46 @@ object PhotoEdit {
                 for (y in 0 until h) for (x in 0 until w) { val i = y * w + x; o[i] = (t[max(0, y - 1) * w + x] + 2 * t[i] + t[min(h - 1, y + 1) * w + x]) / 4f }
                 a = o
             }
-            // Sobel
+            // ab 0.5 „Details“: bei wenig Details zusätzlich stark glätten (Kastenfilter, zweimal ≈ Gauß)
+            if (br > 0) repeat(2) { a = boxBlur(a, w, h, br) }
             for (y in 0 until h) for (x in 0 until w) {
-                val xm = max(0, x - 1); val xp = min(w - 1, x + 1); val ym = max(0, y - 1) * w; val yp = min(h - 1, y + 1) * w; val yc = y * w
-                val gx = (a[ym + xp] + 2 * a[yc + xp] + a[yp + xp]) - (a[ym + xm] + 2 * a[yc + xm] + a[yp + xm])
-                val gy = (a[yp + xm] + 2 * a[yp + x] + a[yp + xp]) - (a[ym + xm] + 2 * a[ym + x] + a[ym + xp])
-                val mag = sqrt(gx * gx + gy * gy) / 4f
-                if (mag > best[yc + x]) best[yc + x] = mag
+                val gx: Float; val gy: Float
+                if (sp == 1) {   // Sobel
+                    val xm = max(0, x - 1); val xp = min(w - 1, x + 1); val ym = max(0, y - 1) * w; val yp = min(h - 1, y + 1) * w; val yc = y * w
+                    gx = ((a[ym + xp] + 2 * a[yc + xp] + a[yp + xp]) - (a[ym + xm] + 2 * a[yc + xm] + a[yp + xm])) / 4f
+                    gy = ((a[yp + xm] + 2 * a[yp + x] + a[yp + xp]) - (a[ym + xm] + 2 * a[ym + x] + a[ym + xp])) / 4f
+                } else {         // Differenz über ±sp Pixel (Stufe einer geglätteten Kante ≈ volle Höhe)
+                    gx = a[y * w + min(w - 1, x + sp)] - a[y * w + max(0, x - sp)]
+                    gy = a[min(h - 1, y + sp) * w + x] - a[max(0, y - sp) * w + x]
+                }
+                val mag = sqrt(gx * gx + gy * gy)
+                val i = y * w + x
+                if (mag > best[i]) { best[i] = mag; bgx[i] = gx; bgy[i] = gy }
             }
         }
-        // Schwellwert mit weichem Übergang; Wurzel macht Linien kräftig statt grau
-        val m = FloatArray(w * h) { i -> sqrt(min(1f, max(0f, (best[i] - thr) / soft))) }
+        // Linien auf die Mitte der Kante ausdünnen (Nicht-Maximum-Unterdrückung entlang der Kantenrichtung)
+        val m = FloatArray(w * h)
+        for (y in 0 until h) for (x in 0 until w) {
+            val i = y * w + x; val g = best[i]
+            if (g <= thr) continue
+            val ax = abs(bgx[i]); val ay = abs(bgy[i])
+            val (dx, dy) = when {
+                ax > 2.414f * ay -> 1 to 0
+                ay > 2.414f * ax -> 0 to 1
+                (bgx[i] > 0) == (bgy[i] > 0) -> 1 to 1
+                else -> 1 to -1
+            }
+            val x1 = x + dx; val y1 = y + dy; val x2 = x - dx; val y2 = y - dy
+            val n1 = if (x1 in 0 until w && y1 in 0 until h) best[y1 * w + x1] else 0f
+            val n2 = if (x2 in 0 until w && y2 in 0 until h) best[y2 * w + x2] else 0f
+            if (g >= n1 && g >= n2) m[i] = sqrt(min(1f, (g - thr) / soft))
+        }
+        // ab 0.5: kurze, vereinzelte Linienstückchen entfernen (Mindestlänge an „Details“ gekoppelt)
+        val minLen = ((1f - det) * (1f - det) * 160f * max(w, h) / WORK_LONG).toInt()
+        if (minLen > 1) removeSmall(m, w, h, minLen)
         // Verdicken (Maximum in einer Scheibe)
-        val r = lineWidth.coerceIn(0, 2)
-        if (r == 0) return m
+        // Linien sind jetzt 1 Pixel breit: fein = Radius 1, mittel = 2, kräftig = 3 (bei 1024 px Arbeitsgröße)
+        val r = lineWidth.coerceIn(0, 2) + 1
         val o = FloatArray(w * h)
         for (y in 0 until h) for (x in 0 until w) {
             var mx = 0f
@@ -222,6 +256,49 @@ object PhotoEdit {
             o[y * w + x] = mx
         }
         return o
+    }
+
+    /** Kastenfilter mit Radius r (waagrecht + senkrecht, gleitende Summe). */
+    fun boxBlur(a: FloatArray, w: Int, h: Int, r: Int): FloatArray {
+        val t = FloatArray(w * h); val o = FloatArray(w * h); val n = 2 * r + 1
+        for (y in 0 until h) {
+            val row = y * w; var s = 0f
+            for (k in -r..r) s += a[row + min(w - 1, max(0, k))]
+            for (x in 0 until w) {
+                t[row + x] = s / n
+                s += a[row + min(w - 1, x + r + 1)] - a[row + max(0, x - r)]
+            }
+        }
+        for (x in 0 until w) {
+            var s = 0f
+            for (k in -r..r) s += t[min(h - 1, max(0, k)) * w + x]
+            for (y in 0 until h) {
+                o[y * w + x] = s / n
+                s += t[min(h - 1, y + r + 1) * w + x] - t[max(0, y - r) * w + x]
+            }
+        }
+        return o
+    }
+
+    /** Zusammenhängende Linienstücke (8er-Nachbarschaft) mit weniger als [minPx] Pixeln löschen. */
+    fun removeSmall(m: FloatArray, w: Int, h: Int, minPx: Int) {
+        val lab = IntArray(w * h); val stack = IntArray(w * h); val comp = IntArray(w * h)
+        var id = 0
+        for (st in 0 until w * h) {
+            if (lab[st] != 0 || m[st] <= 0.01f) continue
+            id++
+            var sp = 0; var cn = 0
+            stack[sp++] = st; lab[st] = id
+            while (sp > 0) {
+                val p = stack[--sp]; comp[cn++] = p
+                val x = p % w; val y = p / w
+                for (dy in -1..1) { val yy = y + dy; if (yy < 0 || yy >= h) continue
+                    for (dx in -1..1) { val xx = x + dx; if (xx < 0 || xx >= w) continue
+                        val q = yy * w + xx
+                        if (lab[q] == 0 && m[q] > 0.01f) { lab[q] = id; stack[sp++] = q } } }
+            }
+            if (cn < minPx) for (i in 0 until cn) m[comp[i]] = 0f
+        }
     }
 
     /** Linienpixel aus Maskenwert. */
@@ -263,16 +340,53 @@ object PhotoEdit {
                 mw = wsz[0]; mh = wsz[1]
                 val base = IntArray(mw * mh)
                 renderBase(ws, ww, wh, s, mw, mh, ignoreCrop, 0, mh, base)
-                mask = lineMask(base, mw, mh, s.sensitivity, s.lineWidth)
+                mask = lineMask(base, mw, mh, s.sensitivity, s.lineWidth, s.detail)
             }
         }
 
+        /** Freistellen-Maske anwenden (Endergebnis); die Vorschau setzt false und nutzt [cutRows]. */
+        var applyCut = true
+        private val af = affine(sw, sh, s, ignoreCrop)
+
         fun rows(y0: Int, y1: Int, out: IntArray) {
             val mk = mask
-            if (mk == null) { renderBase(src, sw, sh, s, ow, oh, ignoreCrop, y0, y1, out); return }
-            for (y in y0 until y1) for (x in 0 until ow)
+            if (mk == null) renderBase(src, sw, sh, s, ow, oh, ignoreCrop, y0, y1, out)
+            else for (y in y0 until y1) for (x in 0 until ow)
                 out[(y - y0) * ow + x] = linePixel(sampleMask(mk, mw, mh, (x + 0.5f) / ow, (y + 0.5f) / oh), s.transparent)
+            val cut = s.mask
+            if (applyCut && cut != null) {
+                for (y in y0 until y1) {
+                    val oy = (y + 0.5f) / oh
+                    for (x in 0 until ow) {
+                        val ox = (x + 0.5f) / ow
+                        val k = cut.sample(af[0] + af[1] * ox + af[2] * oy, af[3] + af[4] * ox + af[5] * oy)
+                        val i = (y - y0) * ow + x
+                        if (k < 1f) { val p = out[i]; val al = (((p ushr 24) * k) + 0.5f).toInt(); out[i] = (al shl 24) or (p and 0xFFFFFF) }
+                    }
+                }
+            }
         }
+
+        /** Sichtbarkeit (0..255) je Ausgabepixel aus der Freistellen-Maske, Zeilen [y0, y1). */
+        fun cutRows(cut: MaskData?, y0: Int, y1: Int, out: ByteArray, x0: Int = 0, x1: Int = ow) {
+            for (y in y0 until y1) {
+                val oy = (y + 0.5f) / oh
+                for (x in x0 until x1) {
+                    val ox = (x + 0.5f) / ow
+                    val k = if (cut == null) 1f else cut.sample(af[0] + af[1] * ox + af[2] * oy, af[3] + af[4] * ox + af[5] * oy)
+                    out[y * ow + x] = (k * 255f + 0.5f).toInt().toByte()
+                }
+            }
+        }
+
+        /** Ausgabepunkt (Pixel) → Masken-Pixel des Originals. */
+        fun toMask(x: Float, y: Float, mw2: Int, mh2: Int): FloatArray {
+            val ox = x / ow; val oy = y / oh
+            return floatArrayOf((af[0] + af[1] * ox + af[2] * oy) * mw2, (af[3] + af[4] * ox + af[5] * oy) * mh2)
+        }
+
+        /** Masken-Pixel je Ausgabepixel (Maßstab, für die Pinselgröße). */
+        fun maskPerOutPx(mw2: Int, mh2: Int): Float = kotlin.math.hypot(af[1] * mw2 / ow, af[4] * mh2 / ow)
 
         fun all(): IntArray { val o = IntArray(ow * oh); rows(0, oh, o); return o }
     }

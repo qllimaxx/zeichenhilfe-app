@@ -1,10 +1,14 @@
 package de.benni.zeichenhilfe
 
 /*
- * Zeichenhilfe AR – Version 0.4
+ * Zeichenhilfe AR – Version 0.5
  * Autor: Benjamin Dormoros
  *
  * Änderungsverlauf
+ * 0.5       Werkzeug „Freistellen“ (Umfahren, Radieren, Zurückholen, Lupe, 2-Finger-Zoom, Rückgängig/Wiederholen;
+ *           Maske in Original-Koordinaten, CutMask.kt), Linienbild mit Regler „Details“ (Glättung, kurze Stücke weg),
+ *           Vorschau beim Ziehen 512 px / beim Loslassen 1024 px, Zuschneiden mit „Vorschau“,
+ *           Zurück bei frisch gewähltem Foto bricht die Auswahl ab (vorheriges Foto bleibt).
  * 0.4       Modus „Foto bearbeiten“ (EditScreen, PhotoEdit): öffnet nach dem Fotowählen, nicht zerstörend
  *           (Original + Einstellungen bleiben), Zuschneiden, Drehen/Spiegeln/Feindrehung, Ton/Graustufen,
  *           Linienbild mit durchsichtigem Hintergrund; „Auf das Blatt legen“ passt bei erkanntem Blatt ein.
@@ -94,7 +98,7 @@ import kotlin.math.min
 import kotlin.math.roundToInt
 
 private const val TAG = "ZeichenhilfeAR"
-private const val VERSION = "0.4"
+private const val VERSION = "0.5"
 private const val FADE_MS = 200L
 
 class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
@@ -213,6 +217,11 @@ class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
     private var prevW = 0
     private var prevH = 0
     private var editSettings = EditSettings()
+    // frisch gewähltes Foto, solange es noch im Bearbeiten-Bildschirm liegt (ab 0.5: Zurück bricht ab)
+    private var candidate: Bitmap? = null
+    private var candPixels = IntArray(0)
+    private var candW = 0
+    private var candH = 0
 
     data class SheetDiag(val found: Boolean = false, val reason: String = "–", val ms: Double = 0.0, val msAvg: Double = 0.0,
                          val rate: Float = 0f, val size: String = "", val jitter: Float = 0f, val detW: Int = 0, val detH: Int = 0)
@@ -308,8 +317,8 @@ class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
         mFit.setOnClickListener { u.closeMenu(); fitToSheet() }
         mEditPhoto.setOnClickListener { u.closeMenu(); openEditor(false) }
         editScreen = EditScreen(this, object : EditScreen.Listener {
-            override fun onEditDone(result: Bitmap, settings: EditSettings, isNew: Boolean) = editDone(result, settings)
-            override fun onEditClosed() { refreshUi() }
+            override fun onEditDone(result: Bitmap, settings: EditSettings, isNew: Boolean) = editDone(result, settings, isNew)
+            override fun onEditClosed(cancelledNew: Boolean) { if (cancelledNew) dropCandidate(); refreshUi() }
             override fun onEditFailed(msg: String) { showMsg(msg, "OK") { hideMsg() } }
         })
         mFocus.setOnClickListener {
@@ -498,8 +507,23 @@ class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
         refreshUi()
     }
 
+    /** Frisch gewähltes, nicht übernommenes Foto verwerfen (das bisherige bleibt). */
+    private fun dropCandidate() {
+        val c = candidate ?: return
+        candidate = null; candPixels = IntArray(0)
+        if (c !== original && c !== lastBitmap && c !== pendingBitmap.get()) c.recycle()
+    }
+
     /** Ergebnis aus dem Bearbeiten-Bildschirm ins AR-Bild übernehmen und ggf. einpassen. */
-    private fun editDone(result: Bitmap, settings: EditSettings) {
+    private fun editDone(result: Bitmap, settings: EditSettings, isNew: Boolean) {
+        val cand = candidate
+        if (isNew && cand != null) {
+            // neues Original übernehmen; das alte nur freigeben, wenn es nicht gerade im AR-Bild liegt
+            val old = original
+            original = cand; prevPixels = candPixels; prevW = candW; prevH = candH
+            candidate = null; candPixels = IntArray(0)
+            if (old != null && old !== lastBitmap && old !== pendingBitmap.get() && old !== result) old.recycle()
+        }
         editSettings = settings
         pendingAspect = result.width.toFloat() / result.height
         val stale = pendingBitmap.getAndSet(result)
@@ -745,12 +769,11 @@ class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
                 val sw = small.width; val sh = small.height
                 if (small !== bmp) small.recycle()
                 ui.post {
-                    // neues Original übernehmen; das alte nur freigeben, wenn es nicht gerade im AR-Bild liegt
-                    val old = original
-                    original = bmp; prevPixels = px; prevW = sw; prevH = sh
-                    editSettings = EditSettings()
-                    if (old != null && old !== lastBitmap && old !== pendingBitmap.get()) old.recycle()
-                    openEditor(true)
+                    // erst im Bearbeiten-Bildschirm zeigen; übernommen wird es erst mit „Auf das Blatt legen“
+                    dropCandidate()
+                    candidate = bmp; candPixels = px; candW = sw; candH = sh
+                    editScreen.open(bmp, px, sw, sh, EditSettings(), true)
+                    refreshUi()
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Foto", e)

@@ -57,4 +57,22 @@
     <string name="bearbeiten_weiter">Weiter bearbeiten</string>
     <string name="beschr_zurueck">Zurück</string>
     <string name="menue_bearbeiten">Foto bearbeiten</string>
+    <!-- ab 0.5 -->
+    <string name="werkzeug_freistellen">Freistellen</string>
+    <string name="bearbeiten_vorschau">Vorschau</string>
+    <string name="bearbeiten_rahmen">Rahmen</string>
+    <string name="bearbeiten_details">Details (viel … wenig)</string>
+    <string name="frei_umfahren">Umfahren</string>
+    <string name="frei_radieren">Radieren</string>
+    <string name="frei_zurueckholen">Zurückholen</string>
+    <string name="frei_innen_behalten">Innen behalten</string>
+    <string name="frei_innen_entfernen">Innen entfernen</string>
+    <string name="frei_pinselgroesse">Pinselgröße</string>
+    <string name="frei_rand_hart">Rand hart</string>
+    <string name="frei_rand_weich">Rand weich</string>
+    <string name="frei_rueckgaengig">Rückgängig</string>
+    <string name="frei_wiederholen">Wiederholen</string>
+    <string name="frei_zuruecksetzen">Freistellen zurücksetzen</string>
+    <string name="frei_hinweis">Mit dem Finger malen bzw. umfahren · 2 Finger: zoomen und verschieben</string>
+    <string name="bearbeiten_foto_verwerfen">Neues Foto verwerfen? Das bisherige Foto bleibt.</string>
 </resources>

@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Zeichenhilfe AR 0.4 – Oberfläche nach Design M1 „Klar“. Lage der Elemente wird in MainActivity.applyLayout()
+<!-- Zeichenhilfe AR 0.5 – Oberfläche nach Design M1 „Klar“. Lage der Elemente wird in MainActivity.applyLayout()
      für Hoch- und Querformat gesetzt; hier stehen nur die Grundwerte. -->
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/root"

@@ -1,11 +1,14 @@
 package de.benni.zeichenhilfe
 
 /*
- * Werkzeuge des Bearbeiten-Bildschirms (ab 0.4 mit Funktion, siehe PhotoEdit.kt und EditScreen.kt).
- * Autor: Benjamin Dormoros
+ * Werkzeuge des Bearbeiten-Bildschirms (siehe PhotoEdit.kt, CutMask.kt und EditScreen.kt).
+ * Reihenfolge = Werkzeugreihe. Autor: Benjamin Dormoros
  */
 
-/** Werkzeuge der Bearbeiten-Ansicht. */
+/** Werkzeuge der Bearbeiten-Ansicht (Freistellen ab 0.5). */
 enum class Werkzeug(val titel: String) {
-    ZUSCHNEIDEN("Zuschneiden"), DREHEN("Drehen"), TON("Ton"), LINIEN("Linien")
+    ZUSCHNEIDEN("Zuschneiden"), FREISTELLEN("Freistellen"), DREHEN("Drehen"), TON("Ton"), LINIEN("Linien")
 }
+
+/** Freistellen: Art des Werkzeugs (ab 0.5). */
+enum class CutTool { LASSO, ERASE, RESTORE }
