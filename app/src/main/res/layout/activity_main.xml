@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Zeichenhilfe AR 0.5 – Oberfläche nach Design M1 „Klar“. Lage der Elemente wird in MainActivity.applyLayout()
+<!-- Zeichenhilfe AR 0.6 – Oberfläche nach Design M1 „Klar“. Lage der Elemente wird in MainActivity.applyLayout()
      für Hoch- und Querformat gesetzt; hier stehen nur die Grundwerte. -->
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/root"
@@ -216,6 +216,16 @@
                 android:textIsSelectable="true"
                 android:textSize="13sp" />
         </ScrollView>
+        <TextView
+            android:id="@+id/corrToggle"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:layout_marginTop="12dp"
+            android:background="@drawable/glas_pille"
+            android:gravity="center"
+            android:text="@string/info_korrektur_an"
+            android:textColor="@color/text"
+            android:textSize="14sp" />
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"

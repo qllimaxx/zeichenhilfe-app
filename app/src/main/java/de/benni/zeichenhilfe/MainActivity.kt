@@ -1,10 +1,13 @@
 package de.benni.zeichenhilfe
 
 /*
- * Zeichenhilfe AR – Version 0.5
+ * Zeichenhilfe AR – Version 0.6
  * Autor: Benjamin Dormoros
  *
  * Änderungsverlauf
+ * 0.6       Korrektur gegen Verrutschen am Blatt: im Modus Zeichnen Blatt-Erkennung ca. 3×/s, Versatz zum Anker
+ *           gemittelt/Ausreißer verworfen/Totzone 1 mm, sanft nachgeführt (SheetCorrection.kt); bei Verdeckung aus.
+ *           Info: Schalter Korrektur, letzter Versatz, Anzahl, Blatt erkannt. Einmaliger Tipp „Fokus fest“.
  * 0.5       Werkzeug „Freistellen“ (Umfahren, Radieren, Zurückholen, Lupe, 2-Finger-Zoom, Rückgängig/Wiederholen;
  *           Maske in Original-Koordinaten, CutMask.kt), Linienbild mit Regler „Details“ (Glättung, kurze Stücke weg),
  *           Vorschau beim Ziehen 512 px / beim Loslassen 1024 px, Zuschneiden mit „Vorschau“,
@@ -98,7 +101,7 @@ import kotlin.math.min
 import kotlin.math.roundToInt
 
 private const val TAG = "ZeichenhilfeAR"
-private const val VERSION = "0.5"
+private const val VERSION = "0.6"
 private const val FADE_MS = 200L
 
 class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
@@ -146,6 +149,7 @@ class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
     private val ui = Handler(Looper.getMainLooper())
     private val u = UiState()
     private var prefs: SharedPreferences? = null
+    private var focusTipSeen = false
     private var density = 1f
     private var sliding = false
     private var opacityValUntil = 0L
@@ -210,6 +214,11 @@ class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
     private var fitLong = 0f; private var fitShort = 0f
     private var refitPending = false
     @Volatile private var sheetRel: PhotoOnSheet? = null
+    // Korrektur am Blatt (ab 0.6, GL-Thread; Schalter und Anzeige vom Bedien-Thread)
+    private var corr: SheetCorrection? = null
+    @Volatile private var corrEnabled = true
+    @Volatile private var corrDiag = "–"
+    private var lastFrameNs = 0L
 
     // ---------- Foto bearbeiten (ab 0.4, Bedien-Thread) ----------
     @Volatile private var original: Bitmap? = null        // unverändertes Foto (≤ 4096 px), wird nie verändert
@@ -283,6 +292,7 @@ class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
 
         prefs = try { getSharedPreferences("zeichenhilfe", MODE_PRIVATE) } catch (e: Exception) { null }
         u.drawHintSeen = try { prefs?.getBoolean("zeichnenHinweisGesehen", false) ?: false } catch (e: Exception) { false }
+        focusTipSeen = try { prefs?.getBoolean("fokusTippGesehen", false) ?: false } catch (e: Exception) { false }
 
         applyFonts()
 
@@ -330,6 +340,12 @@ class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
         mMode.setOnClickListener { setMode(if (u.mode == UiMode.ALIGN) UiMode.DRAW else UiMode.ALIGN) }
         findViewById<View>(R.id.mInfo).setOnClickListener { showInfo(true) }
         findViewById<View>(R.id.infoClose).setOnClickListener { showInfo(false) }
+        val corrBtn = findViewById<TextView>(R.id.corrToggle)
+        corrBtn.setOnClickListener {
+            corrEnabled = !corrEnabled
+            corrBtn.text = getString(if (corrEnabled) R.string.info_korrektur_an else R.string.info_korrektur_aus)
+            updateInfo()
+        }
         findViewById<View>(R.id.remember).setOnClickListener { ops.add(Op.Remember); u.showToast("Position gemerkt", now()); refreshUi() }
 
         // ---- Deckkraft ----
@@ -467,6 +483,11 @@ class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
         u.setMode(m, now())
         detectOn = u.mode == UiMode.ALIGN
         if (m == UiMode.DRAW) saveDrawHintSeen()
+        if (m == UiMode.DRAW && !focusFixed && !focusTipSeen) {
+            focusTipSeen = true
+            u.showToast("Tipp: Fokus fest für ruhigeres Bild", now())
+            try { prefs?.edit()?.putBoolean("fokusTippGesehen", true)?.apply() } catch (e: Exception) { }
+        }
         refreshUi()
     }
 
@@ -923,6 +944,8 @@ class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
             appendLine("Blatt-Erkennung: " + String.format(Locale.GERMANY, "%.0f ms (Mittel %.0f ms), %.1f×/s, Bild %d×%d",
                 sd.ms, sd.msAvg, sd.rate, sd.detW, sd.detH))
             appendLine("Stabilität: Ecken zittern " + String.format(Locale.GERMANY, "%.1f px", sd.jitter) + " (im Erkennungsbild)")
+            appendLine("Korrektur am Blatt: " + (if (corrEnabled) "an" else "aus") + if (fitted) "" else " (wirkt nur bei eingepasstem Foto)")
+            appendLine(corrDiag)
             val rel = sheetRel
             appendLine("Foto relativ zum Blatt: " + if (rel == null || !fitted) "nicht eingepasst" else
                 String.format(Locale.GERMANY, "Mitte %.1f / %.1f cm, Drehung %.0f°, Breite %.1f cm (Blatt %.1f × %.1f cm)",
@@ -1002,21 +1025,32 @@ class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
             }
             if (refitPending && camTracking) { refitPending = false; refitSameSheet(frame) }
 
-            // Blatt-Erkennung (nur Ausrichten)
+            // Blatt-Erkennung: Ausrichten (Rahmen, Einpassen) bzw. Zeichnen (nur Korrektur, unsichtbar)
             if (detectOn) {
                 if (camTracking) captureForDetection(frame)
-                consumeDetection(frame)
-            } else if (sheetNow != null || sheetWorld != null) {
-                tracker.reset(); sheetNow = null; sheetWorld = null; detOut.set(null)
-                sheetDiag = sheetDiag.copy(found = false, reason = "aus (Zeichnen)", size = "", jitter = 0f)
+                consumeDetection(frame, false)
+            } else {
+                if (sheetNow != null || sheetWorld != null) {
+                    tracker.reset(); sheetNow = null; sheetWorld = null; detOut.set(null)
+                    sheetDiag = sheetDiag.copy(found = false, reason = "aus (Zeichnen)", size = "", jitter = 0f)
+                }
+                if (corr != null && fitted && corrEnabled) {
+                    if (camTracking) captureForDetection(frame)
+                    consumeDetection(frame, true)
+                }
             }
+            val fn = System.nanoTime()
+            val dtMs = if (lastFrameNs == 0L) 33f else ((fn - lastFrameNs) / 1e6f).coerceIn(0f, 200f)
+            lastFrameNs = fn
+            corr?.let { it.enabled = corrEnabled; it.step(dtMs) }
             updateSheetOverlay(z)
 
             // Foto zeichnen
             val a = anchor
             if (camTracking && a != null && a.trackingState == TrackingState.TRACKING && photo.hasTexture) {
                 val am = FloatArray(16); a.pose.toMatrix(am, 0)
-                val model = Mat4.mul(am, place.localMatrix())
+                val cm = if (fitted) corr?.matrix() else null           // Korrektur am Blatt
+                val model = if (cm != null) Mat4.mul(am, Mat4.mul(cm, place.localMatrix())) else Mat4.mul(am, place.localMatrix())
                 val mvp = Mat4.mul(ViewZoom.clipMatrix(z[0], z[1], z[2]), Mat4.mul(vp, model))
                 photo.draw(mvp, opacity)
             }
@@ -1041,7 +1075,10 @@ class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
         val o = pose.translation
         val n = pose.yAxis
         val w = RayPlane.intersect(inv, x, y, viewW, viewH, o, n) ?: return null
-        return anchorLocal(w)
+        val l = anchorLocal(w) ?: return null
+        val c = corr
+        if (fitted && c != null) { val q = c.toSheet(l[0], l[2]); return floatArrayOf(q[0], l[1], q[1]) }   // in nachgeführte Blatt-Koordinaten
+        return l
     }
 
     private fun handleOp(op: Op, frame: Frame, s: Session) {
@@ -1065,6 +1102,7 @@ class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
                         if (l != null) place.faceCamera(l[0], l[2])
                         remembered = null
                         fitted = false; sheetRel = null        // frei platziert, nicht am Blatt
+                        corr = null
                         ok = true
                         break
                     }
@@ -1100,7 +1138,7 @@ class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
     /** Y-Kanal des CPU-Kamerabilds kopieren und im Hintergrund auswerten (höchstens ca. 8×/s, nie zwei zugleich). */
     private fun captureForDetection(frame: Frame) {
         val t = SystemClock.uptimeMillis()
-        if (detBusy || t - lastDetSubmit < 125L) return
+        if (detBusy || t - lastDetSubmit < (if (detectOn) 125L else 330L)) return   // Ausrichten ~8×/s, Zeichnen ~3×/s
         val inv = invVp ?: return
         var img: Image? = null
         try {
@@ -1131,7 +1169,7 @@ class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
     }
 
     /** Ergebnis der Erkennung übernehmen: Bildecken -> Ansicht -> Strahl auf die Tischfläche -> Blatt in Metern. */
-    private fun consumeDetection(frame: Frame) {
+    private fun consumeDetection(frame: Frame, draw: Boolean) {
         val out = detOut.getAndSet(null) ?: return
         val job = out.job
         if (job.rot != lastRotation || job.viewW != viewW || job.viewH != viewH) return   // Drehung dazwischen: verwerfen
@@ -1148,13 +1186,14 @@ class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
             val imgPx = FloatArray(8) { c[it] * out.factor }
             val viewPx = FloatArray(8)
             frame.transformCoordinates2d(Coordinates2d.IMAGE_PIXELS, imgPx, Coordinates2d.VIEW, viewPx)
-            extra = sheetOnTable(frame, viewPx, job)
+            extra = sheetOnTable(frame, viewPx, job, draw)
             if (extra == null) reason = "keine Tischfläche unter dem Blatt"
             else {
                 val sh = Sheet.fromCorners(extra.copyOfRange(0, 12), extra.copyOfRange(12, 15))
                 if (sh == null || sh.short < 0.05f || sh.long > 1.2f) { reason = "Größe unplausibel"; extra = null }
             }
         }
+        if (draw) { feedCorrection(extra, reason); return }
         tracker.add(if (extra != null) c else null, extra)
         if (tracker.stable) {
             val m = tracker.meanExtra()
@@ -1171,10 +1210,12 @@ class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
     }
 
     /** 4 Ansichtspunkte -> Weltecken auf der waagrechten Fläche unter der Blattmitte (12 Werte) + Normale (3 Werte). */
-    private fun sheetOnTable(frame: Frame, v: FloatArray, job: DetJob): FloatArray? {
+    private fun sheetOnTable(frame: Frame, v: FloatArray, job: DetJob, draw: Boolean = false): FloatArray? {
         val cx = (v[0] + v[2] + v[4] + v[6]) / 4f; val cy = (v[1] + v[3] + v[5] + v[7]) / 4f
         var o: FloatArray? = null; var n: FloatArray? = null
-        for (hit in frame.hitTest(cx, cy)) {
+        val a = anchor
+        if (draw && a != null) { o = a.pose.translation; n = a.pose.yAxis }      // Zeichnen: Ebene des Ankers (= Blatt)
+        if (o == null) for (hit in frame.hitTest(cx, cy)) {
             val t = hit.trackable
             if (t is Plane && t.trackingState == TrackingState.TRACKING && t.type == Plane.Type.HORIZONTAL_UPWARD_FACING) {
                 o = hit.hitPose.translation; n = t.centerPose.yAxis; break
@@ -1188,6 +1229,26 @@ class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
         }
         System.arraycopy(n, 0, out, 12, 3)
         return out
+    }
+
+    /** Zeichnen: gemessenes Blatt in Anker-Koordinaten an die Korrektur geben. */
+    private fun feedCorrection(extra: FloatArray?, reason: String) {
+        val c = corr ?: return
+        val a = anchor
+        if (extra != null && a != null && a.trackingState == TrackingState.TRACKING) {
+            val inv = a.pose.inverse()
+            val loc = FloatArray(8)
+            for (i in 0 until 4) {
+                val p = inv.transformPoint(floatArrayOf(extra[3 * i], extra[3 * i + 1], extra[3 * i + 2]))
+                loc[2 * i] = p[0]; loc[2 * i + 1] = p[2]
+            }
+            c.measure(loc)
+        } else c.measure(FloatArray(8))   // ungültig → Korrektur ausgesetzt (Grund unten)
+        val why = if (extra == null) reason.ifEmpty { "nicht erkannt" } else c.lastReason
+        corrDiag = (if (c.lastValid) "Blatt im Zeichnen erkannt: ja" else "Blatt im Zeichnen erkannt: nein ($why)") +
+            "\nLetzter Versatz zum Anker: " + (if (c.lastOffset < 0) "–" else f1(c.lastOffset * 1000f) + " mm") +
+            " · angewendet " + f1(kotlin.math.hypot(c.appliedX, c.appliedZ) * 1000f) + " mm, " +
+            f1(Math.toDegrees(c.appliedT.toDouble()).toFloat()) + "° · Korrekturen: ${c.count}"
     }
 
     /** Rahmen ums Blatt: Weltecken in jedem Bild neu auf den (gezoomten) Bildschirm abbilden. */
@@ -1219,6 +1280,7 @@ class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
         anchor = a
         place.cx = 0f; place.cz = 0f; place.width = f.width; place.theta = f.theta
         fitted = true; fitLong = sh.long; fitShort = sh.short
+        corr = SheetCorrection(sh.long, sh.short)             // neue Bezugslage, Versatz 0
         updateSheetRel()
         remembered = null
         ui.post { u.onPlaced(now()); u.showToast("Foto eingepasst · Rand 1 cm", now()); refreshUi() }
@@ -1242,7 +1304,8 @@ class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
         val a = anchor ?: return null
         val pose = a.pose
         return listOf(-0.5f to -0.5f, 0.5f to -0.5f, 0.5f to 0.5f, -0.5f to 0.5f).map { (uu, vv) ->
-            val c = place.corner(uu, vv)
+            var c = place.corner(uu, vv)
+            val k = corr; if (fitted && k != null) c = k.toAnchor(c[0], c[1])
             pose.transformPoint(floatArrayOf(c[0], 0f, c[1]))
         }
     }

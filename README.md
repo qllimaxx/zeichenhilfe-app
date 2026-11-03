@@ -1,4 +1,4 @@
-# Zeichenhilfe AR – Version 0.5
+# Zeichenhilfe AR – Version 0.6
 
 Autor: Benjamin Dormoros
 
@@ -60,6 +60,8 @@ Die App braucht kein Internet, zeigt keine Werbung und kein Konto. Fotos bleiben
 7. Mehr-Menü (···): Foto wählen, Fokus Auto/Fest, Zeichnen/Ausrichten, Info. „Info“ zeigt die Diagnose, „Position merken“ startet den Drift-Test.
 
 Schrift: Inter (SIL Open Font License, siehe `app/src/main/assets/fonts/OFL.txt`).
+
+**Korrektur am Blatt (ab 0.6):** Ist das Foto eingepasst, erkennt die App im Modus Zeichnen das Blatt ca. 3× pro Sekunde und führt das Foto sanft nach, wenn es sich gegenüber dem Blatt verschoben hat (ab ca. 1 mm). Ist das Blatt verdeckt, wird nicht korrigiert. Schalter und Werte in „Info“.
 
 ## Technik (kurz)
 

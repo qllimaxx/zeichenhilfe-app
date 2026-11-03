@@ -21,6 +21,8 @@
     <string name="beschr_deckkraft">Deckkraft des Fotos</string>
     <string name="info_titel">Info und Diagnose</string>
     <string name="info_merken">Position merken</string>
+    <string name="info_korrektur_an">Korrektur am Blatt: an</string>
+    <string name="info_korrektur_aus">Korrektur am Blatt: aus</string>
     <string name="info_schliessen">Schließen</string>
     <string name="erneut">Erneut versuchen</string>
     <!-- Bearbeiten-Bildschirm (ab 0.4) -->
