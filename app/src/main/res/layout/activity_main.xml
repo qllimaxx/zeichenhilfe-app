@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Zeichenhilfe AR 0.3 – Oberfläche nach Design M1 „Klar“. Lage der Elemente wird in MainActivity.applyLayout()
+<!-- Zeichenhilfe AR 0.4 – Oberfläche nach Design M1 „Klar“. Lage der Elemente wird in MainActivity.applyLayout()
      für Hoch- und Querformat gesetzt; hier stehen nur die Grundwerte. -->
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/root"
@@ -106,6 +106,7 @@
             android:orientation="vertical"
             android:visibility="gone">
             <TextView android:id="@+id/mFit" style="@style/MenuePille" android:drawableEnd="@drawable/ic_einpassen" android:text="@string/menue_neu_einpassen" android:visibility="gone" />
+            <TextView android:id="@+id/mEditPhoto" style="@style/MenuePille" android:drawableEnd="@drawable/ic_bearbeiten" android:text="@string/menue_bearbeiten" android:visibility="gone" />
             <TextView android:id="@+id/mPhoto" style="@style/MenuePille" android:drawableEnd="@drawable/ic_foto" android:text="@string/menue_foto" />
             <TextView android:id="@+id/mFocus" style="@style/MenuePille" android:drawableEnd="@drawable/ic_fokus" android:text="@string/menue_fokus_auto" />
             <TextView android:id="@+id/mMode" style="@style/MenuePille" android:drawableEnd="@drawable/ic_stift" android:text="@string/menue_zeichnen" />
@@ -224,6 +225,9 @@
             <TextView android:id="@+id/infoClose" style="@style/BlattKnopf" android:text="@string/info_schliessen" />
         </LinearLayout>
     </LinearLayout>
+
+    <!-- Foto bearbeiten (ab 0.4), Vollbild über allem außer Meldungen -->
+    <include layout="@layout/bearbeiten" />
 
     <!-- Meldung (Fehler, Erlaubnis) -->
     <LinearLayout

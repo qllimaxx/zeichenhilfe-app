@@ -23,10 +23,38 @@
     <string name="info_merken">Position merken</string>
     <string name="info_schliessen">Schließen</string>
     <string name="erneut">Erneut versuchen</string>
-    <!-- Bearbeiten-Bildschirm (Gerüst, in 0.2 nicht sichtbar) -->
+    <!-- Bearbeiten-Bildschirm (ab 0.4) -->
     <string name="werkzeug_zuschneiden">Zuschneiden</string>
     <string name="werkzeug_drehen">Drehen</string>
     <string name="werkzeug_ton">Ton</string>
     <string name="werkzeug_linien">Linien</string>
     <string name="bearbeiten_auflegen">Auf das Blatt legen</string>
+    <string name="bearbeiten_titel">Foto bearbeiten</string>
+    <string name="bearbeiten_alles_zurueck">Alles zurücksetzen</string>
+    <string name="bearbeiten_zuruecksetzen">Zurücksetzen</string>
+    <string name="bearbeiten_seitenverhaeltnis">Seitenverhältnis</string>
+    <string name="bearbeiten_frei">Frei</string>
+    <string name="bearbeiten_original">Original</string>
+    <string name="bearbeiten_quadrat">1:1</string>
+    <string name="bearbeiten_zuschnitt_hinweis">Ecken und Kanten des Rahmens ziehen, innen verschieben.</string>
+    <string name="bearbeiten_links90">90° links</string>
+    <string name="bearbeiten_rechts90">90° rechts</string>
+    <string name="bearbeiten_spiegeln">Spiegeln</string>
+    <string name="bearbeiten_feindrehung">Feindrehung</string>
+    <string name="bearbeiten_helligkeit">Helligkeit</string>
+    <string name="bearbeiten_kontrast">Kontrast</string>
+    <string name="bearbeiten_graustufen">Graustufen</string>
+    <string name="bearbeiten_linienbild">Linienbild</string>
+    <string name="bearbeiten_empfindlichkeit">Empfindlichkeit (weniger … mehr Linien)</string>
+    <string name="bearbeiten_linienstaerke">Linienstärke</string>
+    <string name="bearbeiten_fein">fein</string>
+    <string name="bearbeiten_mittel">mittel</string>
+    <string name="bearbeiten_kraeftig">kräftig</string>
+    <string name="bearbeiten_durchsichtig">Hintergrund durchsichtig</string>
+    <string name="bearbeiten_vorbereiten">Wird vorbereitet …</string>
+    <string name="bearbeiten_verwerfen_frage">Änderungen seit dem Öffnen verwerfen?</string>
+    <string name="bearbeiten_verwerfen">Verwerfen</string>
+    <string name="bearbeiten_weiter">Weiter bearbeiten</string>
+    <string name="beschr_zurueck">Zurück</string>
+    <string name="menue_bearbeiten">Foto bearbeiten</string>
 </resources>

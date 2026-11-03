@@ -147,7 +147,7 @@ class PhotoRenderer {
             varying vec2 vUv;
             uniform sampler2D uTex;
             uniform float uAlpha;
-            void main() { vec4 c = texture2D(uTex, vUv); gl_FragColor = vec4(c.rgb, c.a * uAlpha); }
+            void main() { gl_FragColor = texture2D(uTex, vUv) * uAlpha; }   // Textur ist vormultipliziert (Android-Bitmap)
             """.trimIndent()
         )
         aPos = GLES20.glGetAttribLocation(prog, "aPos")
@@ -180,7 +180,7 @@ class PhotoRenderer {
         GLES20.glDisable(GLES20.GL_DEPTH_TEST)
         GLES20.glDisable(GLES20.GL_CULL_FACE)
         GLES20.glEnable(GLES20.GL_BLEND)
-        GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA, GLES20.GL_ONE_MINUS_SRC_ALPHA)
+        GLES20.glBlendFunc(GLES20.GL_ONE, GLES20.GL_ONE_MINUS_SRC_ALPHA)
         GLES20.glUseProgram(prog)
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, tex)

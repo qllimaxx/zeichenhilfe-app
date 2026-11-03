@@ -1,10 +1,14 @@
 package de.benni.zeichenhilfe
 
 /*
- * Zeichenhilfe AR – Version 0.3
+ * Zeichenhilfe AR – Version 0.4
  * Autor: Benjamin Dormoros
  *
  * Änderungsverlauf
+ * 0.4       Modus „Foto bearbeiten“ (EditScreen, PhotoEdit): öffnet nach dem Fotowählen, nicht zerstörend
+ *           (Original + Einstellungen bleiben), Zuschneiden, Drehen/Spiegeln/Feindrehung, Ton/Graustufen,
+ *           Linienbild mit durchsichtigem Hintergrund; „Auf das Blatt legen“ passt bei erkanntem Blatt ein.
+ *           Mehr-Menü „Foto bearbeiten“. Foto-Textur jetzt mit vormultipliziertem Alpha gemischt.
  * 0.3       Blatt-Erkennung im Modus Ausrichten (eigene Bildauswertung im Hintergrund, ca. 8×/s, SheetDetector),
  *           Rahmen ums Blatt, Status „Blatt erkannt · 21,0 × 29,7 cm“, Hauptknopf „Einpassen“, „Neu einpassen“
  *           im Mehr-Menü, Foto mittig mit 1 cm Rand eingepasst und am Blatt verankert, Lage relativ zum Blatt
@@ -90,7 +94,7 @@ import kotlin.math.min
 import kotlin.math.roundToInt
 
 private const val TAG = "ZeichenhilfeAR"
-private const val VERSION = "0.3"
+private const val VERSION = "0.4"
 private const val FADE_MS = 200L
 
 class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
@@ -120,6 +124,8 @@ class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
     private lateinit var mFocus: TextView
     private lateinit var mMode: TextView
     private lateinit var mFit: TextView
+    private lateinit var mEditPhoto: TextView
+    private lateinit var editScreen: EditScreen
     private lateinit var sheetOverlay: SheetOverlay
     private lateinit var actions: LinearLayout
     private lateinit var photoBtn: ImageButton
@@ -201,6 +207,13 @@ class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
     private var refitPending = false
     @Volatile private var sheetRel: PhotoOnSheet? = null
 
+    // ---------- Foto bearbeiten (ab 0.4, Bedien-Thread) ----------
+    @Volatile private var original: Bitmap? = null        // unverändertes Foto (≤ 4096 px), wird nie verändert
+    private var prevPixels = IntArray(0)                  // Original verkleinert (lange Seite ≤ 1024) für Vorschau/Linien
+    private var prevW = 0
+    private var prevH = 0
+    private var editSettings = EditSettings()
+
     data class SheetDiag(val found: Boolean = false, val reason: String = "–", val ms: Double = 0.0, val msAvg: Double = 0.0,
                          val rate: Float = 0f, val size: String = "", val jitter: Float = 0f, val detW: Int = 0, val detH: Int = 0)
 
@@ -244,6 +257,7 @@ class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
         mFocus = findViewById(R.id.mFocus)
         mMode = findViewById(R.id.mMode)
         mFit = findViewById(R.id.mFit)
+        mEditPhoto = findViewById(R.id.mEditPhoto)
         sheetOverlay = findViewById(R.id.sheetOverlay)
         actions = findViewById(R.id.actions)
         photoBtn = findViewById(R.id.photoBtn)
@@ -278,6 +292,7 @@ class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
                 e[0] = i.left; e[1] = i.top; e[2] = i.right; e[3] = i.bottom
             } else legacyInsets(insets, e)
             uiLayer.setPadding(e[0], e[1], e[2], e[3])
+            findViewById<View>(R.id.edit).setPadding(e[0], e[1], e[2], e[3])
             info.setPadding(dp(20f) + e[0], info.paddingTop, dp(20f) + e[2], infoPadB + e[3])
             insets
         }
@@ -291,6 +306,12 @@ class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
         lockBtn.setOnClickListener { u.toggleLock(now()); refreshUi() }
         findViewById<View>(R.id.mPhoto).setOnClickListener { u.closeMenu(); pickPhoto() }
         mFit.setOnClickListener { u.closeMenu(); fitToSheet() }
+        mEditPhoto.setOnClickListener { u.closeMenu(); openEditor(false) }
+        editScreen = EditScreen(this, object : EditScreen.Listener {
+            override fun onEditDone(result: Bitmap, settings: EditSettings, isNew: Boolean) = editDone(result, settings)
+            override fun onEditClosed() { refreshUi() }
+            override fun onEditFailed(msg: String) { showMsg(msg, "OK") { hideMsg() } }
+        })
         mFocus.setOnClickListener {
             focusFixed = !focusFixed
             ops.add(Op.Focus(focusFixed))
@@ -318,6 +339,7 @@ class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
                 when {
+                    editScreen.isOpen -> editScreen.onBack()
                     info.visibility == View.VISIBLE -> showInfo(false)
                     u.menuOpen -> { u.closeMenu(); refreshUi() }
                     else -> { isEnabled = false; onBackPressedDispatcher.onBackPressed(); isEnabled = true }
@@ -340,6 +362,7 @@ class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         applyLayout()
+        editScreen.applyLayout()
     }
 
     // ---------- Schrift: Inter aus assets/fonts (OFL-Lizenz liegt daneben) ----------
@@ -352,7 +375,8 @@ class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
             if (v is ViewGroup) for (i in 0 until v.childCount) walk(v.getChildAt(i))
         }
         walk(findViewById(R.id.root))
-        if (semi != null) { mainBtn.typeface = semi; findViewById<TextView>(R.id.infoTitle).typeface = semi }
+        if (semi != null) { mainBtn.typeface = semi; findViewById<TextView>(R.id.infoTitle).typeface = semi
+            findViewById<TextView>(R.id.editTitle).typeface = semi; findViewById<TextView>(R.id.editApply).typeface = semi }
         if (reg != null) { infoText.typeface = reg; gestureHint.typeface = reg; drawHint.typeface = reg; msgText.typeface = reg; driftText.typeface = reg }
     }
 
@@ -466,6 +490,31 @@ class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
         refreshUi()
     }
 
+    // ---------- Foto bearbeiten ----------
+    private fun openEditor(isNew: Boolean) {
+        val o = original ?: return
+        if (info.visibility == View.VISIBLE) showInfo(false)
+        editScreen.open(o, prevPixels, prevW, prevH, editSettings, isNew)
+        refreshUi()
+    }
+
+    /** Ergebnis aus dem Bearbeiten-Bildschirm ins AR-Bild übernehmen und ggf. einpassen. */
+    private fun editDone(result: Bitmap, settings: EditSettings) {
+        editSettings = settings
+        pendingAspect = result.width.toFloat() / result.height
+        val stale = pendingBitmap.getAndSet(result)
+        if (stale != null && stale !== result && stale !== original) stale.recycle()
+        hasPhoto = true
+        u.hasPhoto = true
+        when {
+            fitted -> u.showToast("Foto ans Blatt eingepasst", now())                    // GL-Thread passt neu ein
+            u.placed -> u.showToast("Foto liegt an derselben Stelle", now())
+            sheetNow != null && u.mode == UiMode.ALIGN -> ops.add(Op.Fit)                  // Blatt erkannt: automatisch einpassen
+            else -> u.showToast("Foto bereit – „Platzieren“ oder auf die Fläche tippen", now())
+        }
+        refreshUi()
+    }
+
     /** Einpassen bzw. „Neu einpassen“: Foto mittig aufs erkannte Blatt (Ausführung im GL-Thread). */
     private fun fitToSheet() {
         when {
@@ -547,6 +596,7 @@ class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
             actions.post { placeMenu() }
         }
         mFit.visibility = if (u.refitVisible()) View.VISIBLE else View.GONE
+        mEditPhoto.visibility = if (original != null) View.VISIBLE else View.GONE
         if (lastMainAction != u.mainAction) {
             val ma = u.mainAction
             mainBtn.text = getString(when (ma) { MainAction.DONE -> R.string.aktion_fertig; MainAction.FIT -> R.string.aktion_einpassen; else -> R.string.aktion_platzieren })
@@ -625,6 +675,7 @@ class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
     override fun onDestroy() {
         ui.removeCallbacks(tick)
         detExec?.shutdownNow(); detExec = null
+        editScreen.shutdown()
         session?.close()
         session = null
         super.onDestroy()
@@ -686,18 +737,20 @@ class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
                     contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, o2) }
                         ?: throw IllegalStateException("leer")
                 }
-                pendingAspect = bmp.width.toFloat() / bmp.height
-                pendingBitmap.getAndSet(bmp)?.recycle()
-                hasPhoto = true
+                // verkleinerte Fassung (lange Seite ≤ 1024) für Vorschau und Liniensuche
+                val k = min(1f, 1024f / max(bmp.width, bmp.height))
+                val small = if (k < 1f) Bitmap.createScaledBitmap(bmp, max(1, (bmp.width * k).roundToInt()), max(1, (bmp.height * k).roundToInt()), true) else bmp
+                val px = IntArray(small.width * small.height)
+                small.getPixels(px, 0, small.width, 0, 0, small.width, small.height)
+                val sw = small.width; val sh = small.height
+                if (small !== bmp) small.recycle()
                 ui.post {
-                    u.hasPhoto = true
-                    u.showToast(when {
-                        fitted -> "Neues Foto wird ans Blatt eingepasst"
-                        u.placed -> "Neues Foto liegt an derselben Stelle"
-                        sheetNow != null -> "Foto geladen – jetzt „Einpassen“"
-                        else -> "Foto geladen – jetzt „Platzieren“"
-                    }, now())
-                    refreshUi()
+                    // neues Original übernehmen; das alte nur freigeben, wenn es nicht gerade im AR-Bild liegt
+                    val old = original
+                    original = bmp; prevPixels = px; prevW = sw; prevH = sh
+                    editSettings = EditSettings()
+                    if (old != null && old !== lastBitmap && old !== pendingBitmap.get()) old.recycle()
+                    openEditor(true)
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Foto", e)
@@ -874,7 +927,7 @@ class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
         if (hasPhoto && pendingBitmap.get() == null) lastBitmap?.let { pendingBitmap.compareAndSet(null, it) }
     }
 
-    private var lastBitmap: Bitmap? = null
+    @Volatile private var lastBitmap: Bitmap? = null
 
     override fun onSurfaceChanged(g: GL10?, width: Int, height: Int) {
         GLES20.glViewport(0, 0, width, height)
@@ -899,7 +952,8 @@ class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
             // neues Foto hochladen
             pendingBitmap.getAndSet(null)?.let { bmp ->
                 photo.upload(bmp)
-                if (lastBitmap !== bmp) lastBitmap?.recycle()
+                val prevBmp = lastBitmap
+                if (prevBmp != null && prevBmp !== bmp && prevBmp !== original) prevBmp.recycle()   // Original nie freigeben
                 lastBitmap = bmp
                 place.aspect = pendingAspect
                 if (fitted) refitPending = true      // war eingepasst: neues Foto genauso ans Blatt

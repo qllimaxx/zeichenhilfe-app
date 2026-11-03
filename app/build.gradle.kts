@@ -11,8 +11,8 @@ android {
         applicationId = "de.benni.zeichenhilfe"
         minSdk = 24
         targetSdk = 35
-        versionCode = 3
-        versionName = "0.3"
+        versionCode = 4
+        versionName = "0.4"
     }
 
     // KOMPROMISS FÜR DIE PROBE: fester Debug-Schlüssel im (öffentlichen) Repository, damit sich

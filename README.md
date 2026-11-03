@@ -1,4 +1,4 @@
-# Zeichenhilfe AR – Version 0.3
+# Zeichenhilfe AR – Version 0.4
 
 Autor: Benjamin Dormoros
 
@@ -45,10 +45,11 @@ Die App braucht kein Internet, zeigt keine Werbung und kein Konto. Fotos bleiben
    - Dann fragt Android nach der **Kamera-Erlaubnis**. Auf „Zulassen“ bzw. „Bei Nutzung der App“ tippen.
 5. Spätere Versionen lassen sich einfach **über** die alte installieren, ohne vorher zu deinstallieren. Sie werden immer mit demselben Schlüssel signiert.
 
-## Bedienung (ab 0.3)
+## Bedienung (ab 0.4)
 
 1. Handy langsam über den Tisch bewegen, bis oben „Fläche erkannt“ erscheint.
 2. Unten rechts auf den runden Foto-Knopf tippen und ein Bild wählen.
+   Danach öffnet sich **„Foto bearbeiten“** (ab 0.4): Zuschneiden (Frei / Original / 1:1), Drehen (90°, Spiegeln, Feindrehung ±45°), Ton (Helligkeit, Kontrast, Graustufen) und Linien (Linienbild, Empfindlichkeit, Linienstärke, Hintergrund durchsichtig). „Auf das Blatt legen“ übernimmt das Foto; bei erkanntem Blatt wird automatisch eingepasst. Das Original bleibt erhalten, alles lässt sich später über Mehr → „Foto bearbeiten“ ändern oder zurücksetzen. Der Zurück-Pfeil verwirft nur die Änderungen seit dem Öffnen.
 3. **Blatt einpassen (ab 0.3):** Liegt ein helles Blatt ganz im Bild auf dunklerem Untergrund, erscheint ein weißer Rahmen und oben „Blatt erkannt · 21,0 × 29,7 cm“. „Einpassen“ legt das Foto mittig aufs Blatt, so groß wie möglich mit 1 cm Rand, lange Fotoseite an der langen Blattseite. „Neu einpassen“ steht im Mehr-Menü.
    Ohne erkanntes Blatt: „Platzieren“ legt das Foto in die Bildmitte auf die Fläche (ca. 20 cm breit). Alternativ direkt auf die Fläche tippen.
 4. **Ausrichten:** 1 Finger verschiebt, 2 Finger drehen und skalieren. Erneutes Tippen setzt das Foto neu.
