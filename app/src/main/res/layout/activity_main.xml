@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Zeichenhilfe AR 0.2 – Oberfläche nach Design M1 „Klar“. Lage der Elemente wird in MainActivity.applyLayout()
+     für Hoch- und Querformat gesetzt; hier stehen nur die Grundwerte. -->
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/root"
     android:layout_width="match_parent"
@@ -10,73 +12,209 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent" />
 
-    <!-- Oben: dezenter Hinweis und Zoom -->
-    <LinearLayout
-        android:id="@+id/top"
+    <!-- Bedienebene: bekommt die Ränder (Kamera-Loch, Gestenleiste) als Innenabstand -->
+    <FrameLayout
+        android:id="@+id/ui"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_gravity="top"
-        android:gravity="center_horizontal"
-        android:orientation="vertical"
-        android:padding="10dp">
-        <TextView
-            android:id="@+id/hint"
+        android:layout_height="match_parent"
+        android:clipChildren="false"
+        android:clipToPadding="false">
+
+        <!-- oben mittig: Status, Gesten-Hinweis, Zoom, Drift -->
+        <LinearLayout
+            android:id="@+id/topStack"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:background="@drawable/feld"
-            android:paddingStart="12dp"
-            android:paddingTop="5dp"
-            android:paddingEnd="12dp"
-            android:paddingBottom="5dp"
-            android:textColor="#E6FFFFFF"
-            android:textSize="13sp" />
+            android:layout_gravity="top|center_horizontal"
+            android:layout_marginTop="8dp"
+            android:gravity="center_horizontal"
+            android:orientation="vertical">
+            <TextView
+                android:id="@+id/status"
+                style="@style/Pille"
+                android:drawableStart="@drawable/punkt"
+                android:drawablePadding="8dp"
+                android:text="AR startet …" />
+            <TextView
+                android:id="@+id/gestureHint"
+                style="@style/Pille"
+                android:layout_marginTop="8dp"
+                android:minHeight="30dp"
+                android:text="@string/hinweis_gesten"
+                android:textColor="@color/text_neben"
+                android:textSize="12sp"
+                android:visibility="gone" />
+            <TextView
+                android:id="@+id/zoomPill"
+                style="@style/Pille"
+                android:minHeight="30dp"
+                android:text="2,0×"
+                android:visibility="gone" />
+            <TextView
+                android:id="@+id/drift"
+                style="@style/Pille"
+                android:layout_marginTop="8dp"
+                android:minHeight="28dp"
+                android:textSize="11.5sp"
+                android:visibility="gone" />
+        </LinearLayout>
+
+        <!-- Deckkraft-Regler am rechten Rand -->
+        <de.benni.zeichenhilfe.VerticalSlider
+            android:id="@+id/opacity"
+            android:layout_width="48dp"
+            android:layout_height="240dp"
+            android:layout_gravity="end|top"
+            android:layout_marginTop="110dp"
+            android:contentDescription="@string/beschr_deckkraft" />
         <TextView
-            android:id="@+id/drift"
+            android:id="@+id/opacityVal"
+            style="@style/Pille"
+            android:layout_gravity="end|top"
+            android:layout_marginEnd="52dp"
+            android:textSize="15sp"
+            android:text="50 %"
+            android:visibility="gone" />
+
+        <!-- Sperre (Zeichnen) am rechten Rand -->
+        <ImageButton
+            android:id="@+id/lock"
+            style="@style/RundKnopf"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:layout_gravity="end|center_vertical"
+            android:layout_marginEnd="8dp"
+            android:alpha="0.8"
+            android:contentDescription="@string/beschr_sperre"
+            android:src="@drawable/ic_schloss_offen"
+            android:visibility="gone" />
+
+        <!-- Mehr-Menü: Stapel kleiner Pillen -->
+        <LinearLayout
+            android:id="@+id/menu"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginTop="6dp"
-            android:background="@drawable/feld"
-            android:paddingStart="10dp"
-            android:paddingTop="3dp"
-            android:paddingEnd="10dp"
-            android:paddingBottom="3dp"
-            android:textColor="#E6FFFFFF"
+            android:layout_gravity="end|bottom"
+            android:layout_marginEnd="16dp"
+            android:layout_marginBottom="84dp"
+            android:orientation="vertical"
+            android:visibility="gone">
+            <TextView android:id="@+id/mPhoto" style="@style/MenuePille" android:drawableEnd="@drawable/ic_foto" android:text="@string/menue_foto" />
+            <TextView android:id="@+id/mFocus" style="@style/MenuePille" android:drawableEnd="@drawable/ic_fokus" android:text="@string/menue_fokus_auto" />
+            <TextView android:id="@+id/mMode" style="@style/MenuePille" android:drawableEnd="@drawable/ic_stift" android:text="@string/menue_zeichnen" />
+            <TextView android:id="@+id/mInfo" style="@style/MenuePille" android:drawableEnd="@drawable/ic_info" android:text="@string/menue_info" />
+        </LinearLayout>
+
+        <!-- unten rechts: Foto, Hauptknopf, Ausrichten (nur Zeichnen), Mehr -->
+        <LinearLayout
+            android:id="@+id/actions"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="end|bottom"
+            android:layout_marginEnd="16dp"
+            android:layout_marginBottom="20dp"
+            android:gravity="center"
+            android:orientation="horizontal">
+            <ImageButton
+                android:id="@+id/photoBtn"
+                style="@style/RundKnopf"
+                android:contentDescription="@string/beschr_foto"
+                android:src="@drawable/ic_foto" />
+            <TextView
+                android:id="@+id/mainBtn"
+                android:layout_width="wrap_content"
+                android:layout_height="52dp"
+                android:layout_marginStart="10dp"
+                android:background="@drawable/weiss_pille"
+                android:drawableStart="@drawable/ic_platzieren"
+                android:drawablePadding="8dp"
+                android:drawableTint="@color/tinte"
+                android:gravity="center_vertical"
+                android:paddingStart="20dp"
+                android:paddingEnd="22dp"
+                android:text="@string/aktion_platzieren"
+                android:textColor="@color/tinte"
+                android:textSize="15sp" />
+            <TextView
+                android:id="@+id/alignBtn"
+                style="@style/MenuePille"
+                android:layout_marginTop="0dp"
+                android:layout_marginStart="10dp"
+                android:drawableEnd="@drawable/ic_platzieren"
+                android:text="@string/aktion_ausrichten"
+                android:visibility="gone" />
+            <ImageButton
+                android:id="@+id/moreBtn"
+                style="@style/RundKnopf"
+                android:layout_marginStart="10dp"
+                android:contentDescription="@string/beschr_mehr"
+                android:src="@drawable/ic_mehr" />
+        </LinearLayout>
+
+        <!-- kurze Hinweise unten mittig -->
+        <TextView
+            android:id="@+id/drawHint"
+            style="@style/Pille"
+            android:layout_gravity="bottom|center_horizontal"
+            android:layout_marginBottom="24dp"
+            android:text="@string/hinweis_zeichnen"
+            android:textColor="@color/text_neben"
             android:textSize="12sp"
             android:visibility="gone" />
-    </LinearLayout>
+        <TextView
+            android:id="@+id/toast"
+            style="@style/Pille"
+            android:layout_gravity="center"
+            android:visibility="gone" />
+    </FrameLayout>
 
-    <!-- Info / Diagnose -->
+    <!-- Info/Diagnose als dunkles Blatt von unten -->
     <LinearLayout
         android:id="@+id/info"
         android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:layout_marginStart="16dp"
-        android:layout_marginTop="56dp"
-        android:layout_marginEnd="16dp"
-        android:layout_marginBottom="150dp"
-        android:background="@drawable/feld"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        android:background="@drawable/blatt_hintergrund"
         android:orientation="vertical"
-        android:padding="14dp"
+        android:paddingStart="20dp"
+        android:paddingTop="10dp"
+        android:paddingEnd="20dp"
+        android:paddingBottom="16dp"
         android:visibility="gone">
+        <View
+            android:layout_width="36dp"
+            android:layout_height="4dp"
+            android:layout_gravity="center_horizontal"
+            android:background="@drawable/griff" />
+        <TextView
+            android:id="@+id/infoTitle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:text="@string/info_titel"
+            android:textColor="@color/text"
+            android:textSize="17sp" />
         <ScrollView
+            android:id="@+id/infoScroll"
             android:layout_width="match_parent"
-            android:layout_height="0dp"
-            android:layout_weight="1">
+            android:layout_height="300dp"
+            android:layout_marginTop="10dp">
             <TextView
                 android:id="@+id/infoText"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:textColor="#E6FFFFFF"
+                android:lineSpacingExtra="3dp"
+                android:textColor="@color/text_neben"
                 android:textIsSelectable="true"
                 android:textSize="13sp" />
         </ScrollView>
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="10dp"
+            android:layout_marginTop="12dp"
             android:orientation="horizontal">
-            <Button android:id="@+id/remember" style="@style/Knopf" android:text="Position merken" />
-            <Button android:id="@+id/infoClose" style="@style/Knopf" android:text="Schließen" />
+            <TextView android:id="@+id/remember" style="@style/BlattKnopf" android:layout_marginEnd="10dp" android:text="@string/info_merken" />
+            <TextView android:id="@+id/infoClose" style="@style/BlattKnopf" android:text="@string/info_schliessen" />
         </LinearLayout>
     </LinearLayout>
 
@@ -87,77 +225,27 @@
         android:layout_height="wrap_content"
         android:layout_gravity="center"
         android:layout_margin="24dp"
-        android:background="@drawable/feld"
+        android:background="@drawable/glas_pille"
         android:orientation="vertical"
-        android:padding="16dp"
+        android:padding="20dp"
         android:visibility="gone">
         <TextView
             android:id="@+id/msgText"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:textColor="#FFFFFFFF"
+            android:textColor="@color/text"
             android:textSize="15sp" />
-        <Button
+        <TextView
             android:id="@+id/msgBtn"
-            style="@style/Knopf"
-            android:layout_marginTop="12dp"
-            android:text="Erneut versuchen" />
-    </LinearLayout>
-
-    <!-- Unten: Bedienung -->
-    <LinearLayout
-        android:id="@+id/bottom"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_gravity="bottom"
-        android:background="#99000000"
-        android:orientation="vertical"
-        android:paddingStart="10dp"
-        android:paddingTop="8dp"
-        android:paddingEnd="10dp"
-        android:paddingBottom="8dp">
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="44dp"
-            android:gravity="center_vertical"
-            android:orientation="horizontal">
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Deckkraft"
-                android:textColor="#CCFFFFFF"
-                android:textSize="13sp" />
-            <SeekBar
-                android:id="@+id/opacity"
-                android:layout_width="0dp"
-                android:layout_height="44dp"
-                android:layout_weight="1"
-                android:max="100"
-                android:progress="50" />
-            <TextView
-                android:id="@+id/opacityVal"
-                android:layout_width="44dp"
-                android:layout_height="wrap_content"
-                android:gravity="end"
-                android:text="50 %"
-                android:textColor="#CCFFFFFF"
-                android:textSize="13sp" />
-        </LinearLayout>
-        <HorizontalScrollView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:scrollbars="none">
-            <LinearLayout
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal">
-                <Button android:id="@+id/pick" style="@style/Knopf" android:text="Foto" />
-                <Button android:id="@+id/modeAlign" style="@style/Knopf" android:text="Ausrichten" />
-                <Button android:id="@+id/modeDraw" style="@style/Knopf" android:text="Zeichnen" />
-                <Button android:id="@+id/focus" style="@style/Knopf" android:text="Fokus: Auto" />
-                <Button android:id="@+id/infoBtn" style="@style/Knopf" android:text="Info" />
-            </LinearLayout>
-        </HorizontalScrollView>
+            android:layout_width="wrap_content"
+            android:layout_height="48dp"
+            android:layout_marginTop="14dp"
+            android:background="@drawable/weiss_pille"
+            android:gravity="center"
+            android:paddingStart="20dp"
+            android:paddingEnd="20dp"
+            android:text="@string/erneut"
+            android:textColor="@color/tinte"
+            android:textSize="14sp" />
     </LinearLayout>
 </FrameLayout>

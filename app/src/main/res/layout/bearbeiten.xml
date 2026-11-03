@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Zeichenhilfe AR 0.2 – Gerüst für den Bearbeiten-Bildschirm (Design M1).
+     Wird in 0.2 NICHT angezeigt und hat keine Funktion. Autor: Benjamin Dormoros -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#FF0B0B0C"
+    android:orientation="vertical"
+    android:padding="16dp">
+
+    <!-- Vorschau des Fotos -->
+    <ImageView
+        android:id="@+id/editPreview"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:contentDescription="@string/beschr_foto"
+        android:scaleType="fitCenter" />
+
+    <!-- Werkzeuge -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:orientation="horizontal">
+        <TextView android:id="@+id/toolCrop" style="@style/BlattKnopf" android:layout_marginEnd="6dp" android:text="@string/werkzeug_zuschneiden" />
+        <TextView android:id="@+id/toolRotate" style="@style/BlattKnopf" android:layout_marginEnd="6dp" android:text="@string/werkzeug_drehen" />
+        <TextView android:id="@+id/toolTone" style="@style/BlattKnopf" android:layout_marginEnd="6dp" android:text="@string/werkzeug_ton" />
+        <TextView android:id="@+id/toolLines" style="@style/BlattKnopf" android:text="@string/werkzeug_linien" />
+    </LinearLayout>
+
+    <!-- Regler des gewählten Werkzeugs -->
+    <SeekBar
+        android:id="@+id/editSlider1"
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:layout_marginTop="8dp" />
+    <SeekBar
+        android:id="@+id/editSlider2"
+        android:layout_width="match_parent"
+        android:layout_height="48dp" />
+
+    <TextView
+        android:id="@+id/editApply"
+        android:layout_width="match_parent"
+        android:layout_height="52dp"
+        android:layout_marginTop="8dp"
+        android:background="@drawable/weiss_pille"
+        android:gravity="center"
+        android:text="@string/bearbeiten_auflegen"
+        android:textColor="@color/tinte"
+        android:textSize="15sp" />
+</LinearLayout>

@@ -1,4 +1,30 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Zeichenhilfe AR</string>
+    <!-- Hauptknopf: in 0.3 wird "Platzieren" zu "Einpassen" (nur hier ändern) -->
+    <string name="aktion_platzieren">Platzieren</string>
+    <string name="aktion_fertig">Fertig</string>
+    <string name="aktion_ausrichten">Ausrichten</string>
+    <string name="menue_foto">Foto wählen</string>
+    <string name="menue_fokus_auto">Fokus: Auto</string>
+    <string name="menue_fokus_fest">Fokus: Fest</string>
+    <string name="menue_zeichnen">Zeichnen</string>
+    <string name="menue_ausrichten">Ausrichten</string>
+    <string name="menue_info">Info</string>
+    <string name="hinweis_gesten">1 Finger verschieben · 2 Finger drehen und skalieren</string>
+    <string name="hinweis_zeichnen">Doppeltippen = 1× · Antippen zeigt Bedienung</string>
+    <string name="beschr_foto">Foto wählen</string>
+    <string name="beschr_mehr">Mehr</string>
+    <string name="beschr_sperre">Bildgesten sperren oder entsperren</string>
+    <string name="beschr_deckkraft">Deckkraft des Fotos</string>
+    <string name="info_titel">Info und Diagnose</string>
+    <string name="info_merken">Position merken</string>
+    <string name="info_schliessen">Schließen</string>
+    <string name="erneut">Erneut versuchen</string>
+    <!-- Bearbeiten-Bildschirm (Gerüst, in 0.2 nicht sichtbar) -->
+    <string name="werkzeug_zuschneiden">Zuschneiden</string>
+    <string name="werkzeug_drehen">Drehen</string>
+    <string name="werkzeug_ton">Ton</string>
+    <string name="werkzeug_linien">Linien</string>
+    <string name="bearbeiten_auflegen">Auf das Blatt legen</string>
 </resources>

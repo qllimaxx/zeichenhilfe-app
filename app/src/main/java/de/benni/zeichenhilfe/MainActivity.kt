@@ -1,21 +1,31 @@
 package de.benni.zeichenhilfe
 
 /*
- * Zeichenhilfe AR – Machbarkeitsprobe 0.1-probe
+ * Zeichenhilfe AR – Version 0.2
  * Autor: Benjamin Dormoros
  *
- * Ein Foto wird ohne Marker per ARCore flach auf eine erkannte waagrechte Fläche gelegt und dort verankert.
- * Modus "Ausrichten": 1 Finger verschiebt, 2 Finger drehen/skalieren (in echter Größe auf der Fläche).
- * Modus "Zeichnen": Foto fest, 2 Finger = digitaler Zoom der gesamten Ansicht (1×–5×), 1 Finger = Ausschnitt,
+ * Änderungsverlauf
+ * 0.2       Oberfläche nach Design M1 „Klar“: Kamerabild voll, Bedienung unten rechts auf dunklem Glas,
+ *           Hauptknopf Platzieren/Fertig, schmaler Deckkraft-Regler, Mehr-Menü, Sperre im Zeichnen-Modus,
+ *           Info als Blatt von unten, Hoch- und Querformat, Schrift Inter, neues App-Symbol.
+ *           AR-, Zoom- und Drift-Logik unverändert aus 0.1-probe.
+ * 0.1-probe Machbarkeitsprobe: Foto ohne Marker per ARCore auf den Tisch legen, Zoom im Zeichnen-Modus.
+ *
+ * Modus „Ausrichten“: 1 Finger verschiebt, 2 Finger drehen/skalieren (in echter Größe auf der Fläche).
+ * Modus „Zeichnen“: Foto fest, 2 Finger = digitaler Zoom der gesamten Ansicht (1×–5×), 1 Finger = Ausschnitt,
  * Doppeltippen = 1×. Kein Internet, keine Speicher-Berechtigung (Android-Fotoauswahl).
  */
 
 import android.Manifest
 import android.content.Intent
+import android.content.SharedPreferences
 import android.content.pm.PackageManager
+import android.content.res.ColorStateList
+import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.ImageDecoder
+import android.graphics.Typeface
 import android.net.Uri
 import android.opengl.GLES20
 import android.opengl.GLSurfaceView
@@ -23,19 +33,23 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.provider.Settings
 import android.util.Log
 import android.view.GestureDetector
+import android.view.Gravity
 import android.view.MotionEvent
 import android.view.Surface
 import android.view.View
+import android.view.ViewGroup
 import android.view.WindowInsets
 import android.view.WindowManager
-import android.widget.Button
+import android.widget.FrameLayout
+import android.widget.ImageButton
 import android.widget.LinearLayout
-import android.widget.SeekBar
 import android.widget.TextView
 import androidx.activity.ComponentActivity
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import com.google.ar.core.Anchor
@@ -55,26 +69,26 @@ import com.google.ar.core.exceptions.UnavailableDeviceNotCompatibleException
 import com.google.ar.core.exceptions.UnavailableSdkTooOldException
 import com.google.ar.core.exceptions.UnavailableUserDeclinedInstallationException
 import java.util.EnumSet
+import java.util.Locale
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicReference
 import javax.microedition.khronos.egl.EGLConfig
 import javax.microedition.khronos.opengles.GL10
 import kotlin.concurrent.thread
-import kotlin.math.abs
 import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 
 private const val TAG = "ZeichenhilfeAR"
+private const val VERSION = "0.2"
+private const val FADE_MS = 200L
 
 class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
 
-    private enum class Mode { ALIGN, DRAW }
-
     /** Aufträge vom Bedien-Thread an den GL-Thread (dort liegen Frame, Matrizen und Anker). */
     private sealed class Op {
-        class Tap(val x: Float, val y: Float) : Op()
+        class Tap(val x: Float, val y: Float, val fromButton: Boolean) : Op()
         class Drag(val x0: Float, val y0: Float, val x1: Float, val y1: Float) : Op()
         class Two(val a0x: Float, val a0y: Float, val b0x: Float, val b0y: Float,
                   val a1x: Float, val a1y: Float, val b1x: Float, val b1y: Float) : Op()
@@ -84,23 +98,42 @@ class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
 
     // ---------- Oberfläche ----------
     private lateinit var gl: GLSurfaceView
-    private lateinit var hint: TextView
+    private lateinit var uiLayer: FrameLayout
+    private lateinit var status: TextView
+    private lateinit var gestureHint: TextView
+    private lateinit var zoomPill: TextView
     private lateinit var driftText: TextView
+    private lateinit var slider: VerticalSlider
+    private lateinit var opacityVal: TextView
+    private lateinit var lockBtn: ImageButton
+    private lateinit var menu: LinearLayout
+    private lateinit var mFocus: TextView
+    private lateinit var mMode: TextView
+    private lateinit var actions: LinearLayout
+    private lateinit var photoBtn: ImageButton
+    private lateinit var mainBtn: TextView
+    private lateinit var alignBtn: TextView
+    private lateinit var moreBtn: ImageButton
+    private lateinit var drawHint: TextView
+    private lateinit var toast: TextView
     private lateinit var info: LinearLayout
     private lateinit var infoText: TextView
     private lateinit var msg: LinearLayout
     private lateinit var msgText: TextView
-    private lateinit var msgBtn: Button
-    private lateinit var btnAlign: Button
-    private lateinit var btnDraw: Button
-    private lateinit var btnFocus: Button
+    private lateinit var msgBtn: TextView
     private val ui = Handler(Looper.getMainLooper())
+    private val u = UiState()
+    private var prefs: SharedPreferences? = null
+    private var density = 1f
+    private var sliding = false
+    private var opacityValUntil = 0L
+    private var lastMainAction: MainAction? = null
+    private var lastMode: UiMode? = null
 
     // ---------- Zustand (Bedien-Thread) ----------
     private var session: Session? = null
     private var installRequested = false
     private var permissionAsked = false
-    private var mode = Mode.ALIGN
     private var focusFixed = false
     private val zoom = ViewZoom()
     private var viewW = 1
@@ -151,23 +184,45 @@ class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
         if (uri != null) loadPhoto(uri)
     }
 
+    private fun now() = SystemClock.uptimeMillis()
+    private fun dp(v: Float) = (v * density).roundToInt()
+
     // =====================================================================================
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)   // Bildschirm bleibt an
+        density = resources.displayMetrics.density
 
         gl = findViewById(R.id.gl)
-        hint = findViewById(R.id.hint)
+        uiLayer = findViewById(R.id.ui)
+        status = findViewById(R.id.status)
+        gestureHint = findViewById(R.id.gestureHint)
+        zoomPill = findViewById(R.id.zoomPill)
         driftText = findViewById(R.id.drift)
+        slider = findViewById(R.id.opacity)
+        opacityVal = findViewById(R.id.opacityVal)
+        lockBtn = findViewById(R.id.lock)
+        menu = findViewById(R.id.menu)
+        mFocus = findViewById(R.id.mFocus)
+        mMode = findViewById(R.id.mMode)
+        actions = findViewById(R.id.actions)
+        photoBtn = findViewById(R.id.photoBtn)
+        mainBtn = findViewById(R.id.mainBtn)
+        alignBtn = findViewById(R.id.alignBtn)
+        moreBtn = findViewById(R.id.moreBtn)
+        drawHint = findViewById(R.id.drawHint)
+        toast = findViewById(R.id.toast)
         info = findViewById(R.id.info)
         infoText = findViewById(R.id.infoText)
         msg = findViewById(R.id.msg)
         msgText = findViewById(R.id.msgText)
         msgBtn = findViewById(R.id.msgBtn)
-        btnAlign = findViewById(R.id.modeAlign)
-        btnDraw = findViewById(R.id.modeDraw)
-        btnFocus = findViewById(R.id.focus)
+
+        prefs = try { getSharedPreferences("zeichenhilfe", MODE_PRIVATE) } catch (e: Exception) { null }
+        u.drawHintSeen = try { prefs?.getBoolean("zeichnenHinweisGesehen", false) ?: false } catch (e: Exception) { false }
+
+        applyFonts()
 
         gl.preserveEGLContextOnPause = true
         gl.setEGLContextClientVersion(3)
@@ -175,48 +230,64 @@ class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
         gl.setRenderer(this)
         gl.renderMode = GLSurfaceView.RENDERMODE_CONTINUOUSLY
 
-        // Ränder für Statusleiste/Navigationsleiste (Android 15 zeichnet randlos)
-        val top = findViewById<View>(R.id.top)
-        val bottom = findViewById<View>(R.id.bottom)
-        val bottomPad = bottom.paddingBottom
-        val topPad = top.paddingTop
+        // Ränder (Kamera-Loch, Statusleiste, Gestenleiste): Android 15 zeichnet randlos
+        val infoPadB = info.paddingBottom
         findViewById<View>(R.id.root).setOnApplyWindowInsetsListener { _, insets ->
             val e = IntArray(4)   // links, oben, rechts, unten
             if (Build.VERSION.SDK_INT >= 30) {
                 val i = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
                 e[0] = i.left; e[1] = i.top; e[2] = i.right; e[3] = i.bottom
             } else legacyInsets(insets, e)
-            top.setPadding(e[0] + 10, topPad + e[1], e[2] + 10, top.paddingBottom)
-            bottom.setPadding(e[0] + 20, bottom.paddingTop, e[2] + 20, bottomPad + e[3])
+            uiLayer.setPadding(e[0], e[1], e[2], e[3])
+            info.setPadding(dp(20f) + e[0], info.paddingTop, dp(20f) + e[2], infoPadB + e[3])
             insets
         }
+        uiLayer.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> fitSlider() }
 
-        findViewById<Button>(R.id.pick).setOnClickListener {
-            pickLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
-        }
-        btnAlign.setOnClickListener { setMode(Mode.ALIGN) }
-        btnDraw.setOnClickListener { setMode(Mode.DRAW) }
-        btnFocus.setOnClickListener {
+        // ---- Knöpfe ----
+        photoBtn.setOnClickListener { pickPhoto() }
+        mainBtn.setOnClickListener { onMainButton() }
+        alignBtn.setOnClickListener { setMode(UiMode.ALIGN) }
+        moreBtn.setOnClickListener { u.toggleMenu(now()); refreshUi() }
+        lockBtn.setOnClickListener { u.toggleLock(now()); refreshUi() }
+        findViewById<View>(R.id.mPhoto).setOnClickListener { u.closeMenu(); pickPhoto() }
+        mFocus.setOnClickListener {
             focusFixed = !focusFixed
-            btnFocus.text = if (focusFixed) "Fokus: fest" else "Fokus: Auto"
             ops.add(Op.Focus(focusFixed))
+            u.onControlUsed(now())
+            refreshUi()
         }
-        findViewById<Button>(R.id.infoBtn).setOnClickListener {
-            info.visibility = if (info.visibility == View.VISIBLE) View.GONE else View.VISIBLE
-            updateInfo()
-        }
-        findViewById<Button>(R.id.infoClose).setOnClickListener { info.visibility = View.GONE }
-        findViewById<Button>(R.id.remember).setOnClickListener { ops.add(Op.Remember) }
+        mMode.setOnClickListener { setMode(if (u.mode == UiMode.ALIGN) UiMode.DRAW else UiMode.ALIGN) }
+        findViewById<View>(R.id.mInfo).setOnClickListener { showInfo(true) }
+        findViewById<View>(R.id.infoClose).setOnClickListener { showInfo(false) }
+        findViewById<View>(R.id.remember).setOnClickListener { ops.add(Op.Remember); u.showToast("Position gemerkt", now()); refreshUi() }
 
-        val opVal = findViewById<TextView>(R.id.opacityVal)
-        findViewById<SeekBar>(R.id.opacity).setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(sb: SeekBar, p: Int, fromUser: Boolean) { opacity = p / 100f; opVal.text = "$p %" }
-            override fun onStartTrackingTouch(sb: SeekBar) {}
-            override fun onStopTrackingTouch(sb: SeekBar) {}
+        // ---- Deckkraft ----
+        slider.value = opacity
+        slider.onStart = { sliding = true; u.onControlUsed(now()); refreshUi() }
+        slider.onChange = { v ->
+            opacity = v
+            opacityVal.text = "${(v * 100f).roundToInt()} %"
+            placeOpacityVal()
+            u.onControlUsed(now())
+        }
+        slider.onStop = { sliding = false; opacityValUntil = now() + 800L; refreshUi() }
+        opacityVal.text = "${(opacity * 100f).roundToInt()} %"
+
+        // Zurück-Taste schließt zuerst Info bzw. Menü
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                when {
+                    info.visibility == View.VISIBLE -> showInfo(false)
+                    u.menuOpen -> { u.closeMenu(); refreshUi() }
+                    else -> { isEnabled = false; onBackPressedDispatcher.onBackPressed(); isEnabled = true }
+                }
+            }
         })
 
         setupTouch()
-        setMode(Mode.ALIGN)
+        applyLayout()
+        refreshUi()
         ui.post(tick)
     }
 
@@ -226,10 +297,214 @@ class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
         e[2] = insets.systemWindowInsetRight; e[3] = insets.systemWindowInsetBottom
     }
 
-    private fun setMode(m: Mode) {
-        mode = m
-        btnAlign.isSelected = m == Mode.ALIGN
-        btnDraw.isSelected = m == Mode.DRAW
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        applyLayout()
+    }
+
+    // ---------- Schrift: Inter aus assets/fonts (OFL-Lizenz liegt daneben) ----------
+    private fun applyFonts() {
+        val reg = font("fonts/Inter-Regular.otf")
+        val med = font("fonts/Inter-Medium.otf")
+        val semi = font("fonts/Inter-SemiBold.otf")
+        fun walk(v: View) {
+            if (v is TextView) v.typeface = med ?: v.typeface
+            if (v is ViewGroup) for (i in 0 until v.childCount) walk(v.getChildAt(i))
+        }
+        walk(findViewById(R.id.root))
+        if (semi != null) { mainBtn.typeface = semi; findViewById<TextView>(R.id.infoTitle).typeface = semi }
+        if (reg != null) { infoText.typeface = reg; gestureHint.typeface = reg; drawHint.typeface = reg; msgText.typeface = reg; driftText.typeface = reg }
+    }
+
+    private fun font(path: String): Typeface? = try { Typeface.createFromAsset(assets, path) } catch (e: Exception) { null }
+
+    // ---------- Lage der Bedienelemente (Hoch- und Querformat) ----------
+    private fun applyLayout() {
+        val land = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+        // Knopfgruppe: hoch = Zeile unten rechts, quer = Spalte am rechten Rand
+        actions.orientation = if (land) LinearLayout.VERTICAL else LinearLayout.HORIZONTAL
+        for (i in 0 until actions.childCount) {
+            val c = actions.getChildAt(i)
+            val lp = c.layoutParams as LinearLayout.LayoutParams
+            val gap = if (i == 0) 0 else dp(10f)
+            if (land) { lp.marginStart = 0; lp.topMargin = gap } else { lp.marginStart = gap; lp.topMargin = 0 }
+            c.layoutParams = lp
+        }
+        (actions.layoutParams as FrameLayout.LayoutParams).also {
+            it.gravity = Gravity.END or Gravity.BOTTOM
+            it.marginEnd = dp(16f); it.bottomMargin = dp(if (land) 16f else 20f)
+            actions.layoutParams = it
+        }
+        (lockBtn.layoutParams as FrameLayout.LayoutParams).also {
+            it.gravity = if (land) Gravity.END or Gravity.TOP else Gravity.END or Gravity.CENTER_VERTICAL
+            it.topMargin = if (land) dp(8f) else 0
+            it.marginEnd = dp(if (land) 18f else 8f)
+            lockBtn.layoutParams = it
+        }
+        (slider.layoutParams as FrameLayout.LayoutParams).also {
+            // hoch: rechter Rand, Spur senkrecht über der Mitte der Sperre; quer: links neben der Knopfspalte (siehe placeMenu)
+            it.topMargin = dp(if (land) 16f else 110f)
+            it.marginEnd = dp(20f)
+            slider.layoutParams = it
+        }
+        (opacityVal.layoutParams as FrameLayout.LayoutParams).also {
+            it.topMargin = (slider.layoutParams as FrameLayout.LayoutParams).topMargin
+            opacityVal.layoutParams = it
+        }
+        placeMenu()
+        uiLayer.post { fitSlider(); placeMenu() }
+    }
+
+    private fun isLand() = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+
+    /** Mehr-Menü: hoch = über der Knopfzeile, quer = links neben der Knopfspalte (dort auch der Deckkraft-Regler). */
+    private fun placeMenu() {
+        val lp = menu.layoutParams as FrameLayout.LayoutParams
+        val land = isLand()
+        val colW = max(actions.width, dp(52f))
+        val me = if (land) dp(16f) + colW + dp(12f) else dp(16f)
+        val mb = if (land) dp(16f) else dp(20f) + dp(52f) + dp(12f)
+        if (lp.marginEnd != me || lp.bottomMargin != mb) { lp.marginEnd = me; lp.bottomMargin = mb; menu.layoutParams = lp }
+        val sl = slider.layoutParams as FrameLayout.LayoutParams
+        val se = if (land) dp(16f) + colW + dp(4f) else dp(20f)
+        if (sl.marginEnd != se) { sl.marginEnd = se; slider.layoutParams = sl }
+        val ov = opacityVal.layoutParams as FrameLayout.LayoutParams
+        if (ov.marginEnd != se + dp(44f)) { ov.marginEnd = se + dp(44f); opacityVal.layoutParams = ov }
+    }
+
+    /** Höhe des Deckkraft-Reglers so wählen, dass er weder Sperre noch Knopfgruppe berührt. */
+    private fun fitSlider() {
+        val avail = uiLayer.height - uiLayer.paddingTop - uiLayer.paddingBottom
+        if (avail <= 0) return
+        val lp = slider.layoutParams as FrameLayout.LayoutParams
+        val limit = if (isLand()) avail - dp(16f)                    // neben der Knopfspalte bis fast unten
+                    else avail / 2 - dp(24f) - dp(16f)               // über der Sperre
+        val h = min(dp(260f), max(dp(100f), limit - lp.topMargin))
+        if (lp.height != h) { lp.height = h; slider.layoutParams = lp }
+        if (isLand()) placeMenu()
+    }
+
+    private fun placeOpacityVal() {
+        val h = if (opacityVal.height > 0) opacityVal.height else dp(34f)
+        opacityVal.translationY = slider.knobY() - h / 2f
+    }
+
+    // ---------- Bedienlogik ----------
+    private fun setMode(m: UiMode) {
+        u.setMode(m, now())
+        if (m == UiMode.DRAW) saveDrawHintSeen()
+        refreshUi()
+    }
+
+    private fun saveDrawHintSeen() {
+        try { prefs?.edit()?.putBoolean("zeichnenHinweisGesehen", u.drawHintSeen)?.apply() } catch (e: Exception) { Log.w(TAG, "Speichern", e) }
+    }
+
+    private fun pickPhoto() {
+        try {
+            pickLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+        } catch (e: Exception) {
+            Log.e(TAG, "Fotoauswahl", e)
+            u.showToast("Fotoauswahl konnte nicht geöffnet werden", now())
+        }
+        refreshUi()
+    }
+
+    /** Hauptknopf: Platzieren (in 0.3: Einpassen) bzw. Fertig → Zeichnen. */
+    private fun onMainButton() {
+        when (u.mainAction) {
+            MainAction.PLACE -> {
+                if (!u.hasPhoto) { u.showToast("Zuerst ein Foto wählen", now()); pickPhoto(); return }
+                // Foto in der Bildmitte auf die Fläche legen
+                val p = zoom.unzoom(viewW / 2f, viewH / 2f, viewW, viewH)
+                ops.add(Op.Tap(p[0], p[1], true))
+            }
+            MainAction.DONE -> setMode(UiMode.DRAW)
+        }
+        refreshUi()
+    }
+
+    private fun showInfo(open: Boolean) {
+        u.setInfoOpen(open)
+        info.animate().cancel()
+        if (open) {
+            updateInfo()
+            info.alpha = 0f; info.translationY = 48f * density; info.visibility = View.VISIBLE
+            info.animate().alpha(1f).translationY(0f).setDuration(220L).start()
+        } else if (info.visibility == View.VISIBLE) {
+            info.animate().alpha(0f).translationY(48f * density).setDuration(180L)
+                .withEndAction { if (!u.infoOpen) info.visibility = View.GONE }.start()
+        }
+        refreshUi()
+    }
+
+    /** Ein- und Ausblenden mit kurzer Überblendung (200 ms, ohne Unschärfe). */
+    private val fadeTarget = HashMap<View, Boolean>()
+    private fun fade(v: View, show: Boolean) {
+        val cur = fadeTarget[v] ?: (v.visibility == View.VISIBLE)
+        if (cur == show) return
+        fadeTarget[v] = show
+        v.animate().cancel()
+        if (show) {
+            if (v.visibility != View.VISIBLE) { v.alpha = 0f; v.visibility = View.VISIBLE }
+            v.animate().alpha(1f).setDuration(FADE_MS).start()
+        } else {
+            v.animate().alpha(0f).setDuration(FADE_MS).withEndAction { if (fadeTarget[v] == false) v.visibility = View.GONE }.start()
+        }
+    }
+
+    /** Alle sichtbaren Elemente aus dem UiState ableiten. Wird bei jedem Ereignis und alle 100 ms aufgerufen. */
+    private fun refreshUi() {
+        val t = now()
+        val st = stats
+        val draw = u.mode == UiMode.DRAW
+        u.hasPhoto = hasPhoto
+        val trackingOk = session != null && st.tracking == "TRACKING"
+
+        // oben
+        status.text = UiState.statusText(session != null, st.tracking == "TRACKING", st.failure, st.planeSeen, u.hasPhoto, u.placed)
+        fade(status, u.statusVisible(trackingOk))
+        fade(gestureHint, u.gestureHintVisible(t))
+        if (u.zoomPillVisible(t, zoomSnap[0])) zoomPill.text = String.format(Locale.GERMANY, "%.1f×", zoomSnap[0])
+        fade(zoomPill, u.zoomPillVisible(t, zoomSnap[0]))
+        if (st.drift.isNotEmpty()) driftText.text = st.drift
+        fade(driftText, st.drift.isNotEmpty())
+
+        // rechter Rand
+        fade(slider, u.opacitySliderVisible(t))
+        fade(opacityVal, (sliding || t < opacityValUntil) && u.opacitySliderVisible(t))
+        if (sliding || t < opacityValUntil) placeOpacityVal()
+        fade(lockBtn, u.lockVisible())
+        lockBtn.setImageResource(if (u.locked) R.drawable.ic_schloss_zu else R.drawable.ic_schloss_offen)
+
+        // unten rechts
+        fade(menu, u.menuOpen)
+        moreBtn.setImageResource(if (u.menuOpen) R.drawable.ic_schliessen else R.drawable.ic_mehr)
+        fade(actions, u.controlsVisible(t))
+        if (lastMode != u.mode) {
+            photoBtn.visibility = if (draw) View.GONE else View.VISIBLE
+            mainBtn.visibility = if (u.mainButtonVisible()) View.VISIBLE else View.GONE
+            alignBtn.visibility = if (draw) View.VISIBLE else View.GONE
+            mMode.text = getString(if (draw) R.string.menue_ausrichten else R.string.menue_zeichnen)
+            mMode.setCompoundDrawablesRelativeWithIntrinsicBounds(0, 0, if (draw) R.drawable.ic_platzieren else R.drawable.ic_stift, 0)
+            mMode.compoundDrawableTintList = ColorStateList.valueOf(0xFFFFFFFF.toInt())
+            lastMode = u.mode
+            actions.post { placeMenu() }
+        }
+        if (lastMainAction != u.mainAction) {
+            val done = u.mainAction == MainAction.DONE
+            mainBtn.text = getString(if (done) R.string.aktion_fertig else R.string.aktion_platzieren)
+            mainBtn.setCompoundDrawablesRelativeWithIntrinsicBounds(if (done) R.drawable.ic_haken else R.drawable.ic_platzieren, 0, 0, 0)
+            mainBtn.compoundDrawableTintList = ColorStateList.valueOf(0xFF0B0B0B.toInt())
+            lastMainAction = u.mainAction
+            actions.post { placeMenu() }
+        }
+        mFocus.text = getString(if (focusFixed) R.string.menue_fokus_fest else R.string.menue_fokus_auto)
+
+        // Hinweise
+        fade(drawHint, u.drawHintVisible(t))
+        if (u.toastVisible(t)) toast.text = u.toastText
+        fade(toast, u.toastVisible(t))
     }
 
     // ---------- Lebenszyklus ----------
@@ -292,6 +567,7 @@ class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
     }
 
     override fun onDestroy() {
+        ui.removeCallbacks(tick)
         session?.close()
         session = null
         super.onDestroy()
@@ -332,7 +608,7 @@ class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
 
     // ---------- Foto laden (im Hintergrund, verkleinert auf höchstens 4096 px) ----------
     private fun loadPhoto(uri: Uri) {
-        hint.text = "Foto wird geladen …"
+        u.showToast("Foto wird geladen …", now()); refreshUi()
         thread(name = "foto") {
             try {
                 val maxSide = 4096
@@ -356,6 +632,11 @@ class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
                 pendingAspect = bmp.width.toFloat() / bmp.height
                 pendingBitmap.getAndSet(bmp)?.recycle()
                 hasPhoto = true
+                ui.post {
+                    u.hasPhoto = true
+                    u.showToast(if (u.placed) "Neues Foto liegt an derselben Stelle" else "Foto geladen – jetzt „Platzieren“", now())
+                    refreshUi()
+                }
             } catch (e: Exception) {
                 Log.e(TAG, "Foto", e)
                 ui.post { showMsg("Das Foto konnte nicht geladen werden.", "OK") { hideMsg() } }
@@ -365,9 +646,16 @@ class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
 
     // ---------- Gesten ----------
     private fun setupTouch() {
-        val dbl = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
+        val det = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
             override fun onDoubleTap(e: MotionEvent): Boolean {
-                if (mode == Mode.DRAW) { zoom.reset(); publishZoom() }
+                if (u.mode == UiMode.DRAW && u.gesturesAllowed()) {
+                    zoom.reset(); publishZoom(); u.onZoomChanged(now()); refreshUi()
+                }
+                return true
+            }
+            override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+                // Zeichnen: Antippen blendet die Bedienung kurz ein (erst nach Ablauf der Doppeltipp-Zeit)
+                if (u.mode == UiMode.DRAW && !u.infoOpen) { u.onTapImage(now()); refreshUi() }
                 return true
             }
         })
@@ -375,10 +663,12 @@ class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
         var downX = 0f; var downY = 0f; var downT = 0L
         var moved = false; var multi = false
         var pAx = 0f; var pAy = 0f; var pBx = 0f; var pBy = 0f
-        val slop = 12f * resources.displayMetrics.density
+        val slop = 12f * density
 
         gl.setOnTouchListener { _, e ->
-            dbl.onTouchEvent(e)
+            det.onTouchEvent(e)
+            val allowed = u.gesturesAllowed()
+            val draw = u.mode == UiMode.DRAW
             when (e.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
                     lastX = e.x; lastY = e.y; downX = e.x; downY = e.y; downT = e.eventTime
@@ -402,35 +692,43 @@ class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
                 MotionEvent.ACTION_MOVE -> {
                     if (e.pointerCount >= 2) {
                         val ax = e.getX(0); val ay = e.getY(0); val bx = e.getX(1); val by = e.getY(1)
-                        if (mode == Mode.DRAW) {
-                            val d0 = hypot(pBx - pAx, pBy - pAy); val d1 = hypot(bx - ax, by - ay)
-                            if (d0 > 1f) {
-                                zoom.pinch((pAx + pBx) / 2, (pAy + pBy) / 2, (ax + bx) / 2, (ay + by) / 2, d1 / d0, viewW, viewH)
-                                publishZoom()
+                        if (allowed) {
+                            if (draw) {
+                                val d0 = hypot(pBx - pAx, pBy - pAy); val d1 = hypot(bx - ax, by - ay)
+                                if (d0 > 1f) {
+                                    zoom.pinch((pAx + pBx) / 2, (pAy + pBy) / 2, (ax + bx) / 2, (ay + by) / 2, d1 / d0, viewW, viewH)
+                                    publishZoom(); u.onZoomChanged(now())
+                                }
+                            } else {
+                                val a0 = zoom.unzoom(pAx, pAy, viewW, viewH); val b0 = zoom.unzoom(pBx, pBy, viewW, viewH)
+                                val a1 = zoom.unzoom(ax, ay, viewW, viewH); val b1 = zoom.unzoom(bx, by, viewW, viewH)
+                                ops.add(Op.Two(a0[0], a0[1], b0[0], b0[1], a1[0], a1[1], b1[0], b1[1]))
                             }
-                        } else {
-                            val a0 = zoom.unzoom(pAx, pAy, viewW, viewH); val b0 = zoom.unzoom(pBx, pBy, viewW, viewH)
-                            val a1 = zoom.unzoom(ax, ay, viewW, viewH); val b1 = zoom.unzoom(bx, by, viewW, viewH)
-                            ops.add(Op.Two(a0[0], a0[1], b0[0], b0[1], a1[0], a1[1], b1[0], b1[1]))
                         }
                         pAx = ax; pAy = ay; pBx = bx; pBy = by
                         moved = true
                     } else if (!multi) {
                         if (!moved && hypot(e.x - downX, e.y - downY) > slop) moved = true
-                        if (moved) {
-                            if (mode == Mode.DRAW) { zoom.pan(e.x - lastX, e.y - lastY, viewW, viewH); publishZoom() }
+                        if (moved && allowed) {
+                            if (draw) { zoom.pan(e.x - lastX, e.y - lastY, viewW, viewH); publishZoom() }
                             else {
                                 val p0 = zoom.unzoom(lastX, lastY, viewW, viewH); val p1 = zoom.unzoom(e.x, e.y, viewW, viewH)
                                 ops.add(Op.Drag(p0[0], p0[1], p1[0], p1[1]))
                             }
-                            lastX = e.x; lastY = e.y
                         }
+                        if (moved) { lastX = e.x; lastY = e.y }
                     }
                 }
                 MotionEvent.ACTION_UP -> {
-                    if (!moved && !multi && e.eventTime - downT < 400 && mode == Mode.ALIGN) {
-                        val p = zoom.unzoom(e.x, e.y, viewW, viewH)
-                        ops.add(Op.Tap(p[0], p[1]))
+                    val tap = !moved && !multi && e.eventTime - downT < 400
+                    if (tap && u.infoOpen) showInfo(false)                       // Antippen neben dem Blatt schließt es
+                    else if (tap && !draw) {
+                        // Ausrichten: Antippen schließt das Menü oder platziert das Foto an dieser Stelle
+                        if (!u.onTapImage(now())) {
+                            if (!u.hasPhoto) u.showToast("Zuerst ein Foto wählen", now())
+                            else { val p = zoom.unzoom(e.x, e.y, viewW, viewH); ops.add(Op.Tap(p[0], p[1], false)) }
+                        }
+                        refreshUi()
                     }
                 }
             }
@@ -450,22 +748,13 @@ class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
     }
     private fun hideMsg() { msg.visibility = View.GONE }
 
-    /** Hinweis und Diagnose zweimal pro Sekunde aktualisieren. */
+    /** Oberfläche alle 100 ms (Überblendungen nach Zeit), Diagnose alle 500 ms aktualisieren. */
+    private var tickCount = 0
     private val tick = object : Runnable {
         override fun run() {
-            val st = stats
-            val z = zoomSnap[0]
-            hint.text = when {
-                session == null -> "AR startet …"
-                st.tracking != "TRACKING" -> "Kamera sucht Halt" + (if (st.failure.isNotEmpty()) " – ${st.failure}" else " – Handy langsam bewegen")
-                !hasPhoto -> if (st.planeSeen) "Fläche erkannt – jetzt „Foto“ wählen" else "Handy langsam über den Tisch bewegen …"
-                !st.placed -> if (st.planeSeen) "Fläche erkannt – tippe zum Platzieren" else "Handy langsam über den Tisch bewegen …"
-                mode == Mode.DRAW -> "Zeichnen" + (if (z > 1.001f) " · Zoom " + String.format("%.1f", z).replace('.', ',') + "×" else "")
-                else -> "Ausrichten: 1 Finger verschieben, 2 Finger drehen/skalieren, Tippen = neu platzieren"
-            }
-            if (st.drift.isNotEmpty()) { driftText.text = st.drift; driftText.visibility = View.VISIBLE } else driftText.visibility = View.GONE
-            if (info.visibility == View.VISIBLE) updateInfo()
-            ui.postDelayed(this, 500)
+            refreshUi()
+            if (++tickCount % 5 == 0 && info.visibility == View.VISIBLE) updateInfo()
+            ui.postDelayed(this, 100)
         }
     }
 
@@ -478,7 +767,7 @@ class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
         val avail = try { ArCoreApk.getInstance().checkAvailability(this).name } catch (e: Exception) { "?" }
         val z = zoomSnap
         infoText.text = buildString {
-            appendLine("Version 0.1-probe")
+            appendLine("Version $VERSION")
             appendLine("ARCore (Play-Dienste für AR): $arVer")
             appendLine("ARCore-Status: $avail")
             appendLine("Tracking: ${st.tracking}" + if (st.failure.isNotEmpty()) " (${st.failure})" else "")
@@ -488,7 +777,8 @@ class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
             appendLine("Fokus: " + if (focusFixedNow) "fest (FIXED)" else "Autofokus (AUTO)")
             appendLine("Zoom: " + String.format("%.2f", z[0]).replace('.', ',') + "× (Verschiebung " +
                     String.format("%.2f / %.2f", z[1], z[2]).replace('.', ',') + ")")
-            appendLine("Modus: " + if (mode == Mode.DRAW) "Zeichnen" else "Ausrichten")
+            appendLine("Modus: " + (if (u.mode == UiMode.DRAW) "Zeichnen" else "Ausrichten") + if (u.locked) " (gesperrt)" else "")
+            appendLine("Deckkraft: ${(opacity * 100f).roundToInt()} %")
             appendLine("Anker: ${st.anchor}")
             if (st.drift.isNotEmpty()) appendLine("Drift: ${st.drift}")
             appendLine()
@@ -599,8 +889,9 @@ class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
             is Op.Focus -> configure(s, op.fixed)
             is Op.Remember -> remember()
             is Op.Tap -> {
-                if (!camTracking) return
-                if (!photo.hasTexture) { ui.post { hint.text = "Zuerst „Foto“ wählen" }; return }
+                if (!camTracking) { ui.post { u.showToast("Tracking verloren – Handy langsam bewegen", now()); refreshUi() }; return }
+                if (!photo.hasTexture) { ui.post { u.showToast("Zuerst ein Foto wählen", now()); refreshUi() }; return }
+                var ok = false
                 for (hit in frame.hitTest(op.x, op.y)) {
                     val t = hit.trackable
                     if (t is Plane && t.trackingState == TrackingState.TRACKING && t.isPoseInPolygon(hit.hitPose) &&
@@ -613,8 +904,15 @@ class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
                         val l = anchorLocal(cam)
                         if (l != null) place.faceCamera(l[0], l[2])
                         remembered = null
+                        ok = true
                         break
                     }
+                }
+                ui.post {
+                    if (ok) u.onPlaced(now())
+                    else u.showToast(if (op.fromButton) "In der Bildmitte keine Fläche – Handy langsam über den Tisch bewegen"
+                                     else "Hier keine Fläche erkannt", now())
+                    refreshUi()
                 }
             }
             is Op.Drag -> {
@@ -636,8 +934,8 @@ class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
     private fun cornersWorld(): List<FloatArray>? {
         val a = anchor ?: return null
         val pose = a.pose
-        return listOf(-0.5f to -0.5f, 0.5f to -0.5f, 0.5f to 0.5f, -0.5f to 0.5f).map { (u, v) ->
-            val c = place.corner(u, v)
+        return listOf(-0.5f to -0.5f, 0.5f to -0.5f, 0.5f to 0.5f, -0.5f to 0.5f).map { (uu, vv) ->
+            val c = place.corner(uu, vv)
             pose.transformPoint(floatArrayOf(c[0], 0f, c[1]))
         }
     }
@@ -703,7 +1001,4 @@ class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
         TrackingFailureReason.CAMERA_UNAVAILABLE -> "Kamera nicht verfügbar"
         else -> r.name
     }
-
-    @Suppress("unused")
-    private fun near(a: Float, b: Float) = abs(a - b) < 1e-6f
 }

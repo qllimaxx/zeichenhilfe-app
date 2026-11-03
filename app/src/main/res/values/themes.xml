@@ -2,20 +2,55 @@
 <resources>
     <style name="AppTheme" parent="android:Theme.Material.NoActionBar">
         <item name="android:windowBackground">@android:color/black</item>
-        <item name="android:statusBarColor">@android:color/black</item>
-        <item name="android:navigationBarColor">@android:color/black</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
         <item name="android:colorAccent">#FFFFFFFF</item>
     </style>
-    <style name="Knopf">
+    <!-- kleine Hinweis-Pille auf dunklem Glas -->
+    <style name="Pille">
         <item name="android:layout_width">wrap_content</item>
-        <item name="android:layout_height">44dp</item>
-        <item name="android:minWidth">0dp</item>
-        <item name="android:paddingStart">12dp</item>
-        <item name="android:paddingEnd">12dp</item>
-        <item name="android:layout_marginEnd">6dp</item>
-        <item name="android:textAllCaps">false</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:minHeight">34dp</item>
+        <item name="android:gravity">center_vertical</item>
+        <item name="android:paddingStart">14dp</item>
+        <item name="android:paddingEnd">14dp</item>
+        <item name="android:paddingTop">6dp</item>
+        <item name="android:paddingBottom">6dp</item>
+        <item name="android:background">@drawable/glas_pille</item>
+        <item name="android:textColor">@color/text</item>
+        <item name="android:textSize">13sp</item>
+    </style>
+    <!-- runder Glas-Knopf 52 dp -->
+    <style name="RundKnopf">
+        <item name="android:layout_width">52dp</item>
+        <item name="android:layout_height">52dp</item>
+        <item name="android:background">@drawable/glas_rund</item>
+        <item name="android:scaleType">center</item>
+        <item name="android:tint">@color/text</item>
+    </style>
+    <!-- Eintrag im Mehr-Menü (Pille, 48 dp hoch) -->
+    <style name="MenuePille">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">48dp</item>
+        <item name="android:layout_gravity">end</item>
+        <item name="android:layout_marginTop">10dp</item>
+        <item name="android:gravity">center_vertical</item>
+        <item name="android:paddingStart">18dp</item>
+        <item name="android:paddingEnd">14dp</item>
+        <item name="android:background">@drawable/glas_pille</item>
+        <item name="android:textColor">@color/text</item>
         <item name="android:textSize">14sp</item>
-        <item name="android:textColor">#FFFFFFFF</item>
-        <item name="android:background">@drawable/knopf</item>
+        <item name="android:drawablePadding">10dp</item>
+        <item name="android:drawableTint">@color/text</item>
+    </style>
+    <!-- Knopf im Info-Blatt -->
+    <style name="BlattKnopf">
+        <item name="android:layout_width">0dp</item>
+        <item name="android:layout_height">48dp</item>
+        <item name="android:layout_weight">1</item>
+        <item name="android:gravity">center</item>
+        <item name="android:background">@drawable/glas_pille</item>
+        <item name="android:textColor">@color/text</item>
+        <item name="android:textSize">14sp</item>
     </style>
 </resources>

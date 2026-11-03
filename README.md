@@ -1,4 +1,4 @@
-# Zeichenhilfe AR – Machbarkeitsprobe (0.1-probe)
+# Zeichenhilfe AR – Version 0.2
 
 Autor: Benjamin Dormoros
 
@@ -45,21 +45,19 @@ Die App braucht kein Internet, zeigt keine Werbung und kein Konto. Fotos bleiben
    - Dann fragt Android nach der **Kamera-Erlaubnis**. Auf „Zulassen“ bzw. „Bei Nutzung der App“ tippen.
 5. Spätere Versionen lassen sich einfach **über** die alte installieren, ohne vorher zu deinstallieren. Sie werden immer mit demselben Schlüssel signiert.
 
-## Bedienung
+## Bedienung (ab 0.2)
 
 1. Handy langsam über den Tisch bewegen, bis oben „Fläche erkannt“ erscheint.
-2. „Foto“ antippen und ein Bild wählen.
-3. Auf die Fläche tippen. Das Foto liegt dann ca. 20 cm breit auf dem Tisch. Erneutes Tippen setzt es an die neue Stelle.
-4. **Ausrichten:**
-   - 1 Finger verschiebt das Foto.
-   - 2 Finger drehen und skalieren es.
-5. **Zeichnen:**
-   - Das Foto liegt fest.
-   - 2 Finger zoomen die ganze Ansicht (1×–5×).
-   - 1 Finger verschiebt den Ausschnitt.
-   - Doppeltippen setzt den Zoom auf 1× zurück.
-6. Der Regler „Deckkraft“ stellt die Durchsichtigkeit ein. „Fokus: Auto/fest“ schaltet den Autofokus um.
-7. „Info“ zeigt die Diagnose. „Position merken“ startet den Drift-Test.
+2. Unten rechts auf den runden Foto-Knopf tippen und ein Bild wählen.
+3. „Platzieren“ legt das Foto in die Bildmitte auf die Fläche (ca. 20 cm breit). Alternativ direkt auf die Fläche tippen.
+4. **Ausrichten:** 1 Finger verschiebt, 2 Finger drehen und skalieren. Erneutes Tippen setzt das Foto neu.
+5. „Fertig“ wechselt zu **Zeichnen**: Das Foto liegt fest, 2 Finger zoomen (1×–5×), 1 Finger verschiebt den Ausschnitt, Doppeltippen = 1×.
+   - Antippen zeigt kurz Deckkraft-Regler, „Ausrichten“ und das Mehr-Menü.
+   - Das Schloss am rechten Rand sperrt alle Bildgesten.
+6. Der schmale Regler am rechten Rand stellt die Deckkraft ein.
+7. Mehr-Menü (···): Foto wählen, Fokus Auto/Fest, Zeichnen/Ausrichten, Info. „Info“ zeigt die Diagnose, „Position merken“ startet den Drift-Test.
+
+Schrift: Inter (SIL Open Font License, siehe `app/src/main/assets/fonts/OFL.txt`).
 
 ## Technik (kurz)
 

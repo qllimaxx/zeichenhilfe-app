@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- App-Symbol Zeichenhilfe AR 0.2 (einfarbig, wird vom System eingefärbt): Ring, perspektivisches Blatt, Eckwinkel. Fläche 108×108, Motiv in der sicheren Zone (Ø 66). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+    <path android:fillColor="#00000000" android:pathData="M44,41 L65,39.5 L68,66 L41,67.5 Z" />
+    <path android:strokeColor="#FFFFFFFF" android:strokeWidth="2.2" android:fillColor="#00000000"
+        android:pathData="M54,24 A30,30 0 1,1 54,84 A30,30 0 1,1 54,24 Z" />
+    <path android:strokeColor="#FFFFFFFF" android:strokeWidth="1.8" android:strokeLineJoin="round" android:fillColor="#00000000"
+        android:pathData="M44,41 L65,39.5 L68,66 L41,67.5 Z" />
+    <path android:strokeColor="#FFFFFFFF" android:strokeWidth="1.8" android:strokeLineCap="round" android:strokeLineJoin="round" android:fillColor="#00000000"
+        android:pathData="M37,45 V39 H43 M71,45 V39 H65 M37,63 V69 H43 M71,63 V69 H65" />
+</vector>
