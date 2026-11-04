@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Zeichenhilfe AR 0.7. Autor: Benjamin Dormoros. Keine Internet-Berechtigung. -->
+<!-- Zeichenhilfe AR 0.8. Autor: Benjamin Dormoros. Keine Internet-Berechtigung. -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.CAMERA" />

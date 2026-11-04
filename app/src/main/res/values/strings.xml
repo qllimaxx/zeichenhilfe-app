@@ -23,6 +23,12 @@
     <string name="info_merken">Position merken</string>
     <string name="info_korrektur_an">Korrektur am Blatt: an</string>
     <string name="info_korrektur_aus">Korrektur am Blatt: aus</string>
+    <string name="info_weitwinkel_an">Weitwinkel: an</string>
+    <string name="info_weitwinkel_aus">Weitwinkel: aus</string>
+    <string name="info_weitwinkel_nicht">Weitwinkel: nicht verfügbar</string>
+    <string name="info_zuruecksetzen">Alles zurücksetzen</string>
+    <string name="info_zuruecksetzen_frage">Gespeichertes Foto, Bearbeitung und Lage löschen und neu starten?</string>
+    <string name="hinweis_hoeher">Handy kurz höher halten, bis das ganze Blatt zu sehen ist – danach kannst du es zum Zeichnen hinstellen.</string>
     <string name="info_schliessen">Schließen</string>
     <string name="erneut">Erneut versuchen</string>
     <!-- Bearbeiten-Bildschirm (ab 0.4) -->

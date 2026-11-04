@@ -251,7 +251,7 @@ class EditScreen(private val act: Activity, private val listener: Listener) {
     }
 
     /** Volles Ergebnis (lange Seite ≤ [maxLong]) zeilenweise in eine neue Bitmap schreiben. */
-    private fun renderFull(orig: Bitmap, s: EditSettings, pv: IntArray, w: Int, h: Int, maxLong: Int): Bitmap {
+    fun renderFull(orig: Bitmap, s: EditSettings, pv: IntArray, w: Int, h: Int, maxLong: Int): Bitmap {
         var srcBmp = orig
         if (max(orig.width, orig.height) > maxLong) {
             val k = maxLong.toFloat() / max(orig.width, orig.height)

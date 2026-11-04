@@ -37,6 +37,11 @@ class SheetDetector {
     var minAreaFrac = 0.04f
     /** Mindest-Helligkeitsunterschied Blatt – Untergrund (0..255). */
     var minContrast = 35
+    /** ab 0.8: nach detect() – Ränder (1 links, 2 oben, 4 rechts, 8 unten), die die größte helle Fläche berührt,
+     *  wenn kein Blatt ganz im Bild war (0 = keine). Und Helligkeit innen/außen des gefundenen Blatts. */
+    var lastBorderMask = 0; private set
+    var lastInside = 0f; private set
+    var lastOutside = 0f; private set
 
     fun detect(gray: ByteArray, w: Int, h: Int): Result {
         val t0 = System.nanoTime()
@@ -77,24 +82,34 @@ class SheetDetector {
         val label = IntArray(n)            // 0 = nicht hell/unbesucht, >0 = Fläche
         val stack = IntArray(n)
         var bestLabel = 0; var bestArea = 0
+        var borderArea = 0; var borderMask = 0
+        lastBorderMask = 0
         var cur = 0
         for (start in 0 until n) {
             if (label[start] != 0 || !on[start]) continue
             cur++
             var sp = 0; stack[sp++] = start; label[start] = cur
-            var area = 0; var border = false
+            var area = 0; var border = false; var mask = 0
             while (sp > 0) {
                 val p = stack[--sp]; area++
                 val x = p % w; val y = p / w
-                if (x == 0 || y == 0 || x == w - 1 || y == h - 1) border = true
+                if (x == 0 || y == 0 || x == w - 1 || y == h - 1) {
+                    border = true
+                    if (x == 0) mask = mask or 1; if (y == 0) mask = mask or 2; if (x == w - 1) mask = mask or 4; if (y == h - 1) mask = mask or 8
+                }
                 if (x > 0) { val q = p - 1; if (label[q] == 0 && on[q]) { label[q] = cur; stack[sp++] = q } }
                 if (x < w - 1) { val q = p + 1; if (label[q] == 0 && on[q]) { label[q] = cur; stack[sp++] = q } }
                 if (y > 0) { val q = p - w; if (label[q] == 0 && on[q]) { label[q] = cur; stack[sp++] = q } }
                 if (y < h - 1) { val q = p + w; if (label[q] == 0 && on[q]) { label[q] = cur; stack[sp++] = q } }
             }
             if (!border && area > bestArea) { bestArea = area; bestLabel = cur }
+            if (border && area > borderArea) { borderArea = area; borderMask = mask }
         }
-        if (bestLabel == 0 || bestArea < minAreaFrac * n) return null to "kein helles Blatt ganz im Bild"
+        if (bestLabel == 0 || bestArea < minAreaFrac * n) {
+            // Blatt ragt vermutlich aus dem Bild (größte helle Fläche berührt den Rand) – Ränder für einen Hinweis merken
+            if (borderArea >= minAreaFrac * n && borderArea < 0.85f * n) lastBorderMask = borderMask
+            return null to "kein helles Blatt ganz im Bild"
+        }
 
         // ---- 3. Hülle und Viereck ----
         val pts = ArrayList<FloatArray>()
@@ -124,6 +139,7 @@ class SheetDetector {
         if (why != null) return null to why
         val ci = insideMean(g, w, h, q); val co = outsideMean(g, w, h, q)
         if (ci - co < minContrast) return null to "Blatt hebt sich nicht ab (${(ci - co).roundToInt()})"
+        lastInside = ci.toFloat(); lastOutside = co.toFloat()
         return FloatArray(8) { i -> q[i / 2][i % 2] } to ""
     }
 

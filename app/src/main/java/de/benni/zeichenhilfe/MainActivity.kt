@@ -1,10 +1,18 @@
 package de.benni.zeichenhilfe
 
 /*
- * Zeichenhilfe AR – Version 0.7
+ * Zeichenhilfe AR – Version 0.8
  * Autor: Benjamin Dormoros
  *
  * Änderungsverlauf
+ * 0.8       Fehler „Foto macht einen Abflug“ behoben: Einpassung startet immer bei der Lage beim Einpassen (keine
+ *           Rückkopplung), äußerste Kante je Seite (Spiralbindung/Stift/Hand innen), Helligkeits-Prüfung an der Kante,
+ *           nie Bildrand, Lage-Unsicherheit; Korrektur höchstens 1,5 cm/5° ohne ganzes Blatt, nur bei ruhigen Messungen,
+ *           schleichende Verschiebung wird angehalten. Teilansicht (vordere Kante außerhalb) bis ca. 70°.
+ *           Nahe Clip-Ebene 3 cm → 5 mm (Foto wurde bei tief gehaltenem Handy waagrecht abgeschnitten).
+ *           Hinweis „Handy kurz höher halten …“, Kamera-Prüfung in Info (Konfigurationen, Blickwinkel, Weitwinkel,
+ *           Bildausschnitt), Speichern über Neustart (Foto, Bearbeitung, Maske, Deckkraft, Fokus, Lage am Blatt),
+ *           „Alles zurücksetzen“.
  * 0.7       Zeichnen: bekanntes Blatt-Rechteck an die Kanten im vollen CPU-Bild eingepasst (EdgeTracker) statt
  *           „ganzes Rechteck erkennen“ – geht schräg, mit Spiralbindung, Hand über einer Ecke (3 Kanten reichen);
  *           sonst globale Erkennung als Neustart. Blatt-Erkennung mit lokalem Schwellwert und lockerer Form-Prüfung.
@@ -90,6 +98,7 @@ import com.google.ar.core.exceptions.UnavailableArcoreNotInstalledException
 import com.google.ar.core.exceptions.UnavailableDeviceNotCompatibleException
 import com.google.ar.core.exceptions.UnavailableSdkTooOldException
 import com.google.ar.core.exceptions.UnavailableUserDeclinedInstallationException
+import java.io.File
 import java.util.EnumSet
 import java.util.Locale
 import java.util.concurrent.ConcurrentLinkedQueue
@@ -105,7 +114,7 @@ import kotlin.math.min
 import kotlin.math.roundToInt
 
 private const val TAG = "ZeichenhilfeAR"
-private const val VERSION = "0.7"
+private const val VERSION = "0.8"
 private const val FADE_MS = 200L
 
 class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
@@ -207,7 +216,20 @@ class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
     private class DetJob(val y: ByteArray, val w: Int, val h: Int, val rowStride: Int, val invVp: FloatArray,
                          val rot: Int, val viewW: Int, val viewH: Int, val model: SheetModel? = null, val prior: FloatArray? = null)
     private class DetOut(val r: SheetDetector.Result, val job: DetJob, val factor: Float, val detW: Int, val detH: Int,
-                         val track: EdgeTracker.Result? = null)
+                         val track: EdgeTracker.Result? = null, val borderMask: Int = 0, val ratio: Float = -1f)
+    // ab 0.8
+    @Volatile private var sheetCutBottom = false          // Ausrichten: Blatt ragt unten aus dem Bild
+    private var lastDetRatio = -1f                        // Helligkeit außen/innen der letzten Erkennung (GL-Thread)
+    private var refRatio = -1f                            // … beim Einpassen (für die Kanten-Prüfung im Zeichnen)
+    @Volatile private var restoredRel: PhotoOnSheet? = null   // gespeicherte Lage am Blatt (nach Neustart)
+    // Kamera-Prüfung (ab 0.8)
+    private lateinit var wideBtn: TextView
+    @Volatile private var cameraListText = "–"
+    private var normalConfig: CameraConfig? = null
+    private var wideConfig: CameraConfig? = null
+    private var wideOn = false
+    @Volatile private var displayCropText = "–"
+    @Volatile private var cropPending = true
     // Diagnose Zeichnen (ab 0.7, GL-Thread)
     private var drawValid = 0
     private var drawRejected = 0
@@ -344,6 +366,7 @@ class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
         mFocus.setOnClickListener {
             focusFixed = !focusFixed
             ops.add(Op.Focus(focusFixed))
+            saveState()
             u.onControlUsed(now())
             refreshUi()
         }
@@ -354,7 +377,15 @@ class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
         corrBtn.setOnClickListener {
             corrEnabled = !corrEnabled
             corrBtn.text = getString(if (corrEnabled) R.string.info_korrektur_an else R.string.info_korrektur_aus)
-            updateInfo()
+            updateInfo(); saveState()
+        }
+        wideBtn = findViewById(R.id.wideToggle)
+        wideBtn.setOnClickListener { toggleWide() }
+        findViewById<View>(R.id.resetAll).setOnClickListener {
+            android.app.AlertDialog.Builder(this, android.R.style.Theme_Material_Dialog_Alert)
+                .setMessage(R.string.info_zuruecksetzen_frage)
+                .setPositiveButton(R.string.info_zuruecksetzen) { _, _ -> resetAll() }
+                .setNegativeButton(R.string.bearbeiten_weiter, null).show()
         }
         findViewById<View>(R.id.remember).setOnClickListener { ops.add(Op.Remember); u.showToast("Position gemerkt", now()); refreshUi() }
 
@@ -367,7 +398,7 @@ class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
             placeOpacityVal()
             u.onControlUsed(now())
         }
-        slider.onStop = { sliding = false; opacityValUntil = now() + 800L; refreshUi() }
+        slider.onStop = { sliding = false; opacityValUntil = now() + 800L; refreshUi(); saveState() }
         opacityVal.text = "${(opacity * 100f).roundToInt()} %"
 
         // Zurück-Taste schließt zuerst Info bzw. Menü
@@ -383,6 +414,7 @@ class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
         })
 
         setupTouch()
+        restoreState()
         applyLayout()
         refreshUi()
         ui.post(tick)
@@ -556,6 +588,9 @@ class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
             if (old != null && old !== lastBitmap && old !== pendingBitmap.get() && old !== result) old.recycle()
         }
         editSettings = settings
+        // ab 0.8: speichern (neues Foto als JPEG im Hintergrund, Maske, Zustand)
+        if (isNew) original?.let { savePhotoAsync(it) }
+        saveMask(settings.mask)
         pendingAspect = result.width.toFloat() / result.height
         val stale = pendingBitmap.getAndSet(result)
         if (stale != null && stale !== result && stale !== original) stale.recycle()
@@ -568,6 +603,87 @@ class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
             else -> u.showToast("Foto bereit – „Platzieren“ oder auf die Fläche tippen", now())
         }
         refreshUi()
+        saveState()
+    }
+
+    // ---------- Speichern über Neustart (ab 0.8) ----------
+    private val stateDir: File by lazy { File(filesDir, "zustand").apply { try { mkdirs() } catch (e: Exception) { } } }
+
+    private fun writeAtomic(name: String, data: ByteArray) {
+        try {
+            val tmp = File(stateDir, "$name.tmp"); tmp.writeBytes(data)
+            val dst = File(stateDir, name); if (!tmp.renameTo(dst)) { dst.delete(); tmp.renameTo(dst) }
+        } catch (e: Exception) { Log.w(TAG, "Speichern $name", e) }
+    }
+
+    /** Kleiner Zustand (Text): sofort, im Bedien-Thread. */
+    private fun saveState() {
+        if (restoring) return
+        val st = SavedState(opacity = opacity, focusFixed = focusFixed, edit = editSettings.copy(mask = null),
+            hasPhoto = original != null, sheetLong = if (fitted) fitLong else 0f, sheetShort = if (fitted) fitShort else 0f,
+            rel = if (fitted) sheetRel else restoredRel, corrEnabled = corrEnabled)
+        writeAtomic("zustand.txt", Persist.encode(st).toByteArray())
+    }
+
+    private fun saveMask(m: MaskData?) {
+        if (m == null) { try { File(stateDir, "maske.bin").delete() } catch (e: Exception) { }; return }
+        thread(name = "maske-speichern") { writeAtomic("maske.bin", Persist.encodeMask(m)) }
+    }
+
+    private fun savePhotoAsync(b: Bitmap) {
+        thread(name = "foto-speichern") {
+            try {
+                val bos = java.io.ByteArrayOutputStream()
+                if (!b.isRecycled && b.compress(Bitmap.CompressFormat.JPEG, 95, bos)) writeAtomic("foto.jpg", bos.toByteArray())
+            } catch (e: Throwable) { Log.w(TAG, "Foto speichern", e) }
+        }
+    }
+
+    @Volatile private var restoring = false
+    /** Nach dem Start: letztes Foto, Bearbeitung, Maske und Einstellungen laden. Kaputte Daten → einfach ohne. */
+    private fun restoreState() {
+        val st = try { Persist.decode(File(stateDir, "zustand.txt").takeIf { it.exists() }?.readText()) } catch (e: Exception) { null } ?: return
+        opacity = st.opacity; slider.value = st.opacity; opacityVal.text = "${(st.opacity * 100f).roundToInt()} %"
+        focusFixed = st.focusFixed; if (focusFixed) ops.add(Op.Focus(true))
+        corrEnabled = st.corrEnabled
+        findViewById<TextView>(R.id.corrToggle).text = getString(if (corrEnabled) R.string.info_korrektur_an else R.string.info_korrektur_aus)
+        restoredRel = st.rel
+        if (!st.hasPhoto) return
+        val f = File(stateDir, "foto.jpg"); if (!f.exists()) return
+        restoring = true
+        thread(name = "wiederherstellen") {
+            try {
+                val bmp = BitmapFactory.decodeFile(f.absolutePath, BitmapFactory.Options().apply { inPreferredConfig = Bitmap.Config.ARGB_8888 })
+                    ?: throw IllegalStateException("Foto unlesbar")
+                val k = min(1f, 1024f / max(bmp.width, bmp.height))
+                val small = if (k < 1f) Bitmap.createScaledBitmap(bmp, max(1, (bmp.width * k).roundToInt()), max(1, (bmp.height * k).roundToInt()), true) else bmp
+                val px = IntArray(small.width * small.height); small.getPixels(px, 0, small.width, 0, 0, small.width, small.height)
+                val sw = small.width; val sh = small.height
+                if (small !== bmp) small.recycle()
+                val mask = try { Persist.decodeMask(File(stateDir, "maske.bin").takeIf { it.exists() }?.readBytes(), sw, sh) } catch (e: Exception) { null }
+                val settings = st.edit.copy(mask = mask)
+                val ar = if (settings.isIdentity) bmp else editScreen.renderFull(bmp, settings, px, sw, sh, 4096)
+                ui.post {
+                    original = bmp; prevPixels = px; prevW = sw; prevH = sh; editSettings = settings
+                    pendingAspect = ar.width.toFloat() / ar.height
+                    pendingBitmap.getAndSet(ar)?.let { if (it !== ar && it !== bmp) it.recycle() }
+                    hasPhoto = true; u.hasPhoto = true
+                    u.showToast(if (st.rel != null) "Letztes Foto geladen – Blatt erkennen, dann „Einpassen“" else "Letztes Foto geladen", now())
+                    restoring = false
+                    refreshUi()
+                }
+            } catch (e: Throwable) {
+                Log.w(TAG, "Wiederherstellen", e)
+                ui.post { restoring = false }
+            }
+        }
+    }
+
+    /** Info → „Alles zurücksetzen“: gespeicherte Daten löschen und neu starten. */
+    private fun resetAll() {
+        try { stateDir.listFiles()?.forEach { it.delete() } } catch (e: Exception) { }
+        restoring = true          // nichts mehr speichern
+        recreate()
     }
 
     /** Einpassen bzw. „Neu einpassen“: Foto mittig aufs erkannte Blatt (Ausführung im GL-Thread). */
@@ -620,7 +736,7 @@ class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
         val trackingOk = session != null && st.tracking == "TRACKING"
 
         // oben
-        status.text = UiState.statusText(session != null, st.tracking == "TRACKING", st.failure, st.planeSeen, u.hasPhoto, u.placed,
+        status.text = if (!draw && sh == null && sheetCutBottom && trackingOk && st.planeSeen) getString(R.string.hinweis_hoeher) else UiState.statusText(session != null, st.tracking == "TRACKING", st.failure, st.planeSeen, u.hasPhoto, u.placed,
             if (u.sheetFound) sh?.sizeText() else null, !draw)
         fade(status, u.statusVisible(trackingOk))
         fade(gestureHint, u.gestureHintVisible(t))
@@ -721,6 +837,7 @@ class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
 
     override fun onPause() {
         super.onPause()
+        if (!restoring) saveState()
         if (session != null) {
             gl.onPause()
             session?.pause()
@@ -744,7 +861,20 @@ class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
             if (list.isEmpty()) list = s.getSupportedCameraConfigs(CameraConfigFilter(s))
             val best = list.maxWithOrNull(compareBy<CameraConfig>({ it.textureSize.width.toLong() * it.textureSize.height },
                 { it.imageSize.width.toLong() * it.imageSize.height }))
+            // ab 0.8: alle angebotenen Konfigurationen mit Blickwinkel auflisten, Weitwinkel suchen
+            val all = try { s.getSupportedCameraConfigs(CameraConfigFilter(s)) } catch (e: Exception) { list }
+            val fovs = HashMap<String, Float>()
+            fun fov(id: String) = fovs.getOrPut(id) { horizontalFov(id) }
+            cameraListText = all.joinToString("\n") {
+                "· Kamera ${it.cameraId}: Bild ${it.imageSize.width}×${it.imageSize.height}, Textur ${it.textureSize.width}×${it.textureSize.height}, " +
+                    "${it.fpsRange.lower}–${it.fpsRange.upper} B/s, Blickwinkel " + (fov(it.cameraId).let { f -> if (f > 0) "${f.roundToInt()}°" else "?" })
+            }
             if (best != null) {
+                val bf = fov(best.cameraId)
+                normalConfig = best
+                wideConfig = all.filter { it.facingDirection == CameraConfig.FacingDirection.BACK && bf > 0 && fov(it.cameraId) > bf + 5f }
+                    .maxWithOrNull(compareBy<CameraConfig>({ fov(it.cameraId) }, { it.textureSize.width.toLong() * it.textureSize.height }))
+                ui.post { updateWideBtn() }
                 s.cameraConfig = best
                 cameraConfigText = "Textur ${best.textureSize.width}×${best.textureSize.height}, " +
                         "CPU-Bild ${best.imageSize.width}×${best.imageSize.height}, " +
@@ -754,6 +884,40 @@ class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
             Log.w(TAG, "Kamera-Konfiguration", e)
             cameraConfigText = "Standard (Auswahl fehlgeschlagen: ${e.javaClass.simpleName})"
         }
+    }
+
+    /** Waagrechter Blickwinkel einer Kamera (Camera2-Daten: Sensorbreite, kleinste Brennweite), −1 wenn unbekannt. */
+    private fun horizontalFov(id: String): Float = try {
+        val cm = getSystemService(CAMERA_SERVICE) as android.hardware.camera2.CameraManager
+        val ch = cm.getCameraCharacteristics(id)
+        val size = ch.get(android.hardware.camera2.CameraCharacteristics.SENSOR_INFO_PHYSICAL_SIZE)
+        val fl = ch.get(android.hardware.camera2.CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)?.minOrNull()
+        if (size != null && fl != null && fl > 0f) Math.toDegrees(2.0 * kotlin.math.atan(size.width / (2.0 * fl))).toFloat() else -1f
+    } catch (e: Exception) { -1f }
+
+    private fun updateWideBtn() {
+        if (!::wideBtn.isInitialized) return
+        wideBtn.text = getString(when { wideConfig == null -> R.string.info_weitwinkel_nicht; wideOn -> R.string.info_weitwinkel_an; else -> R.string.info_weitwinkel_aus })
+        wideBtn.alpha = if (wideConfig == null) 0.5f else 1f
+    }
+
+    /** Info → Weitwinkel: Kamera-Konfiguration wechseln (Sitzung kurz anhalten). */
+    private fun toggleWide() {
+        val s = session ?: return
+        val cfg = (if (wideOn) normalConfig else wideConfig) ?: run { u.showToast("Weitwinkel nicht verfügbar", now()); refreshUi(); return }
+        try {
+            gl.onPause(); s.pause()
+            s.cameraConfig = cfg
+            s.resume()
+            wideOn = !wideOn
+            cameraConfigText = "Textur ${cfg.textureSize.width}×${cfg.textureSize.height}, CPU-Bild ${cfg.imageSize.width}×${cfg.imageSize.height}, " +
+                "${cfg.fpsRange.lower}–${cfg.fpsRange.upper} B/s, Kamera ${cfg.cameraId}"
+            surfaceChanged = true; cropPending = true
+        } catch (e: Exception) {
+            Log.w(TAG, "Weitwinkel", e); u.showToast("Umschalten fehlgeschlagen", now())
+            try { s.resume() } catch (e2: Exception) { }
+        } finally { gl.onResume() }
+        updateWideBtn(); updateInfo(); refreshUi()
     }
 
     @Volatile private var focusFixedNow = false
@@ -942,6 +1106,10 @@ class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
             appendLine("Tracking: ${st.tracking}" + if (st.failure.isNotEmpty()) " (${st.failure})" else "")
             appendLine("Bilder pro Sekunde: " + String.format("%.1f", st.fps).replace('.', ','))
             appendLine("Kamera: $cameraConfigText")
+            appendLine("Bildausschnitt: $displayCropText")
+            appendLine("Angebotene Kamera-Konfigurationen:")
+            appendLine(cameraListText)
+            appendLine("Weitwinkel: " + if (wideConfig == null) "nicht verfügbar" else if (wideOn) "an" else "verfügbar (aus)")
             appendLine("Erkannte Flächen: ${st.planes}")
             appendLine("Fokus: " + if (focusFixedNow) "fest (FIXED)" else "Autofokus (AUTO)")
             appendLine("Zoom: " + String.format("%.2f", z[0]).replace('.', ',') + "× (Verschiebung " +
@@ -1003,7 +1171,7 @@ class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
             val rot = displayRotation()
             if (surfaceChanged || rot != lastRotation) {
                 s.setDisplayGeometry(rot, viewW, viewH)
-                surfaceChanged = false; lastRotation = rot
+                surfaceChanged = false; lastRotation = rot; cropPending = true
             }
             // neues Foto hochladen
             pendingBitmap.getAndSet(null)?.let { bmp ->
@@ -1017,12 +1185,13 @@ class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
 
             val frame = s.update()
             val camera = frame.camera
+            if (cropPending) { cropPending = false; displayCropText = cropText(frame) }
             val z = zoomSnap
             bg.draw(frame, z[0], z[1], z[2])
 
             camTracking = camera.trackingState == TrackingState.TRACKING
             if (camTracking) {
-                camera.getProjectionMatrix(proj, 0, 0.03f, 50f)
+                camera.getProjectionMatrix(proj, 0, 0.005f, 50f)   // ab 0.8: 5 mm (vorher 3 cm schnitt das Foto bei tiefem Handy ab)
                 camera.getViewMatrix(view, 0)
                 vp = Mat4.mul(proj, view)
                 invVp = Mat4.invert(vp)
@@ -1072,6 +1241,14 @@ class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
             Log.e(TAG, "Bild", e)
         }
     }
+
+    /** Welcher Teil des Kamerabilds ist auf dem Bildschirm zu sehen? (ARCore füllt den Bildschirm und schneidet ab) */
+    private fun cropText(frame: Frame): String = try {
+        val v = floatArrayOf(0f, 0f, viewW.toFloat(), viewH.toFloat()); val uv = FloatArray(4)
+        frame.transformCoordinates2d(Coordinates2d.VIEW, v, Coordinates2d.TEXTURE_NORMALIZED, uv)
+        val a = (kotlin.math.abs(uv[2] - uv[0]) * 100).roundToInt(); val b = (kotlin.math.abs(uv[3] - uv[1]) * 100).roundToInt()
+        "sichtbar $a % × $b % des Kamerabilds" + if (a < 98 || b < 98) " (Rest abgeschnitten)" else " (ganz)"
+    } catch (e: Exception) { "?" }
 
     private fun anchorLocal(world: FloatArray): FloatArray? {
         val a = anchor ?: return null
@@ -1167,8 +1344,9 @@ class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
                 frame.transformCoordinates2d(Coordinates2d.VIEW, v, Coordinates2d.IMAGE_PIXELS, im)
                 val aff = floatArrayOf(im[0], (im[2] - im[0]) / viewW, (im[4] - im[0]) / viewH, im[1], (im[3] - im[1]) / viewW, (im[5] - im[1]) / viewH)
                 val am = FloatArray(16); a.pose.toMatrix(am, 0)
-                model = SheetModel(am, vp.copyOf(), viewW, viewH, aff, fitLong, fitShort)
-                prior = floatArrayOf(cr.targetX, cr.targetZ, cr.targetT)
+                model = SheetModel(am, vp.copyOf(), viewW, viewH, aff, fitLong, fitShort, refRatio)
+                // ab 0.8: Start IMMER bei der Lage beim Einpassen (Versatz 0) – keine Rückkopplung über die eigene Korrektur
+                prior = floatArrayOf(0f, 0f, 0f)
             }
             val job = DetJob(bytes, img.width, img.height, plane.rowStride, inv.copyOf(), lastRotation, viewW, viewH, model, prior)
             val ex = detExec ?: Executors.newSingleThreadExecutor { r -> Thread(r, "blatt").apply { isDaemon = true } }.also { detExec = it }
@@ -1197,7 +1375,8 @@ class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
                     } else {
                         val sc = SheetDetector.downscale(job.y, job.w, job.h, job.rowStride, 480)
                         val r = detector.detect(sc.gray, sc.w, sc.h)
-                        detOut.set(DetOut(r, job, sc.factor, sc.w, sc.h))
+                        detOut.set(DetOut(r, job, sc.factor, sc.w, sc.h, null, detector.lastBorderMask,
+                            if (r.found && detector.lastInside > 0f) detector.lastOutside / detector.lastInside else -1f))
                     }
                 } catch (e: Throwable) {
                     Log.w(TAG, "Blatt-Erkennung", e)
@@ -1225,6 +1404,8 @@ class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
         var reason = out.r.reason
         var extra: FloatArray? = null
         val c = out.r.corners
+        if (out.ratio > 0f) lastDetRatio = out.ratio
+        sheetCutBottom = !out.r.found && out.borderMask != 0 && (out.borderMask and bottomSide(frame, out)) != 0
         if (out.r.found && c != null) {
             val imgPx = FloatArray(8) { c[it] * out.factor }
             val viewPx = FloatArray(8)
@@ -1273,15 +1454,30 @@ class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
         return out
     }
 
+    /** Welcher Rand des CPU-Bilds ist auf dem Bildschirm unten? (Bitmaske wie SheetDetector.lastBorderMask) */
+    private fun bottomSide(frame: Frame, out: DetOut): Int {
+        return try {
+            val v = floatArrayOf(viewW / 2f, viewH - 2f); val im = FloatArray(2)
+            frame.transformCoordinates2d(Coordinates2d.VIEW, v, Coordinates2d.IMAGE_PIXELS, im)
+            val w = out.job.w.toFloat(); val h = out.job.h.toFloat()
+            val d = floatArrayOf(im[0], im[1], w - im[0], h - im[1])
+            val i = d.indices.minByOrNull { d[it] } ?: 3
+            intArrayOf(1, 2, 4, 8)[i]
+        } catch (e: Exception) { 0 }
+    }
+
     /** Zeichnen (ab 0.7): Ergebnis der Kanten-Einpassung an die Korrektur geben, Diagnose zählen. */
     private fun feedTrack(r: EdgeTracker.Result) {
         val c = corr ?: return
         lastViewDeg = r.viewDeg
-        if (r.ok) { c.measurePose(r.cx, r.cz, r.t); drawValid++ }
+        if (r.ok && c.measurePose(r.cx, r.cz, r.t, r.full)) drawValid++
         else {
+            if (r.ok) { drawRejected++; val key = c.lastReason.substringBefore(" (").substringBefore(" –"); drawReasons[key] = (drawReasons[key] ?: 0) + 1 }
+            else {
             c.invalid(r.reason); drawRejected++
             val key = r.reason.substringBefore(" (")
             drawReasons[key] = (drawReasons[key] ?: 0) + 1
+            }
         }
         val top = drawReasons.maxByOrNull { it.value }?.key ?: "–"
         corrDiag = (if (c.lastValid) "Blatt im Zeichnen erkannt: ja" else "Blatt im Zeichnen erkannt: nein (${c.lastReason})") +
@@ -1320,12 +1516,20 @@ class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
         anchor?.detach()
         anchor = a
         place.cx = 0f; place.cz = 0f; place.width = f.width; place.theta = f.theta
+        // ab 0.8: nach Neustart gespeicherte Lage am Blatt wiederherstellen (wenn die Blattgröße passt)
+        val rr = restoredRel
+        var restored = false
+        if (rr != null && kotlin.math.abs(rr.sheetLong - sh.long) < 0.05f * rr.sheetLong && kotlin.math.abs(rr.sheetShort - sh.short) < 0.05f * rr.sheetShort) {
+            place.cx = rr.cx; place.cz = rr.cz; place.theta = rr.theta; place.width = rr.width
+            restoredRel = null; restored = true
+        }
         fitted = true; fitLong = sh.long; fitShort = sh.short
+        refRatio = lastDetRatio
         corr = SheetCorrection(sh.long, sh.short)             // neue Bezugslage, Versatz 0
         drawValid = 0; drawRejected = 0; drawReasons.clear(); lastViewDeg = -1f
         updateSheetRel()
         remembered = null
-        ui.post { u.onPlaced(now()); u.showToast("Foto eingepasst · Rand 1 cm", now()); refreshUi() }
+        ui.post { u.onPlaced(now()); u.showToast(if (restored) "Gespeicherte Lage am Blatt wiederhergestellt" else "Foto eingepasst · Rand 1 cm", now()); refreshUi(); saveState() }
     }
 
     /** Neues Foto bei eingepasstem Foto: am selben Blatt (Anker bleibt) neu einpassen. */
@@ -1339,7 +1543,11 @@ class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
     }
 
     /** Lage des Fotos relativ zum Blatt merken (Anker = Blattmitte, daher gleich den Foto-Werten). */
-    private fun updateSheetRel() { sheetRel = PhotoOnSheet(place.cx, place.cz, place.theta, place.width, fitLong, fitShort) }
+    private fun updateSheetRel() {
+        sheetRel = PhotoOnSheet(place.cx, place.cz, place.theta, place.width, fitLong, fitShort)
+        ui.removeCallbacks(saveSoon); ui.postDelayed(saveSoon, 1500L)        // Speichern nach dem Nachjustieren
+    }
+    private val saveSoon = Runnable { saveState() }
 
     /** Fotoecken in Weltkoordinaten (Meter). */
     private fun cornersWorld(): List<FloatArray>? {

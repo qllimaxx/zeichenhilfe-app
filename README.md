@@ -1,4 +1,4 @@
-# Zeichenhilfe AR – Version 0.7
+# Zeichenhilfe AR – Version 0.8
 
 Autor: Benjamin Dormoros
 
@@ -62,6 +62,8 @@ Die App braucht kein Internet, zeigt keine Werbung und kein Konto. Fotos bleiben
 Schrift: Inter (SIL Open Font License, siehe `app/src/main/assets/fonts/OFL.txt`).
 
 **Korrektur am Blatt (ab 0.6):** Ist das Foto eingepasst, passt die App im Modus Zeichnen ca. 3× pro Sekunde das bekannte Blatt an die Blattkanten im Kamerabild an (ab 0.7 auch schräg, mit Spiralbindung oder Hand über einer Ecke) und führt das Foto sanft nach, wenn es sich gegenüber dem Blatt verschoben hat (ab ca. 1 mm). Ist das Blatt verdeckt, wird nicht korrigiert. Schalter und Werte in „Info“.
+
+**Ab 0.8:** Foto, Bearbeitung, Freistell-Maske, Deckkraft, Fokus und Lage am Blatt werden auf dem Handy gespeichert und nach dem Neustart geladen; Blatt erkennen + „Einpassen“ stellt die Lage am Blatt wieder her. „Alles zurücksetzen“ in Info löscht das. Info zeigt außerdem die angebotenen Kamera-Konfigurationen.
 
 ## Technik (kurz)
 

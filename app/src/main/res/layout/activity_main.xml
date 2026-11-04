@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Zeichenhilfe AR 0.6 – Oberfläche nach Design M1 „Klar“. Lage der Elemente wird in MainActivity.applyLayout()
+<!-- Zeichenhilfe AR 0.8 – Oberfläche nach Design M1 „Klar“. Lage der Elemente wird in MainActivity.applyLayout()
      für Hoch- und Querformat gesetzt; hier stehen nur die Grundwerte. -->
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/root"
@@ -226,6 +226,14 @@
             android:text="@string/info_korrektur_an"
             android:textColor="@color/text"
             android:textSize="14sp" />
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:orientation="horizontal">
+            <TextView android:id="@+id/wideToggle" style="@style/BlattKnopf" android:layout_marginEnd="10dp" android:text="@string/info_weitwinkel_nicht" />
+            <TextView android:id="@+id/resetAll" style="@style/BlattKnopf" android:text="@string/info_zuruecksetzen" />
+        </LinearLayout>
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"

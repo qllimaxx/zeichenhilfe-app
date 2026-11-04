@@ -67,4 +67,24 @@ class SheetCorrectionTest {
         check(abs(c.appliedX) < 1e-4f, "Korrektur aus → zurück auf 0")
         println(String.format("Echtes Verschieben 5 cm: Foto folgt, größter Schritt je Bild %.2f mm; 179° → %.1f°", maxStep * 1000, Math.toDegrees(d.targetT.toDouble())))
     }
+
+    @Test fun grenzwertUndSchleichendeVerschiebung() {
+        val c = SheetCorrection(L, S)
+        check(!c.measurePose(0.02f, 0f, 0f, full = false), "20 mm ohne ganzes Blatt: verworfen")
+        check(c.measurePose(0.02f, 0f, 0f, full = true), "20 mm mit ganzem Blatt: erlaubt")
+        // schleichend: alle 5 Messungen ruhig 2,5 mm weiter in dieselbe Richtung, nie ganzes Blatt
+        val d = SheetCorrection(L, S); var x = 0f; var stopped = -1
+        for (i in 0 until 40) { if (i % 5 == 0) x += 0.0025f; d.measurePose(x, 0f, 0f); repeat(10) { d.step(33f) }; if (d.frozen && stopped < 0) stopped = i }
+        check(d.frozen && stopped in 0..39, "schleichende Verschiebung wird angehalten")
+        check(d.appliedX < SheetCorrection.LIMIT_M + 1e-4f, "nie über den Grenzwert (${d.appliedX})")
+        // ganzes Blatt hebt die Sperre auf
+        d.measurePose(0.003f, 0f, 0f, full = true)
+        check(!d.frozen, "ganzes Blatt hebt Sperre auf")
+        // unruhige Messungen (± 2 mm) werden nicht übernommen
+        val e = SheetCorrection(L, S); val r = Random(5)
+        repeat(10) { e.measurePose(0.003f + (r.nextGaussian() * 0.002).toFloat(), 0f, 0f) }
+        check(e.count <= 1, "unruhige Messungen kaum übernommen (${e.count})")
+        println(String.format("Absicherung: 20 mm nur mit ganzem Blatt, schleichend angehalten nach %d Messungen bei %.1f mm, unruhig → Ziel %.1f mm, Korrekturen %d",
+            stopped + 1, d.appliedX * 1000, e.targetX * 1000, e.count))
+    }
 }
